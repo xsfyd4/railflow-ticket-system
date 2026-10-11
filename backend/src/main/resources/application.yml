@@ -1,0 +1,25 @@
+# ============================================================
+#  后端主配置文件
+#  改完要重启服务才生效
+# ============================================================
+
+server:
+  port: 8080                # 后端端口，前端会来调 localhost:8080
+
+spring:
+  application:
+    name: train-ticket-backend
+
+logging:
+  level:
+    com.ticket: debug       # 只把自己写的包打成 debug，别让 Spring 的日志刷屏
+
+# ------------------------------------------------------------
+#  下面这些等对应阶段再打开，现在启用会启动报错
+# ------------------------------------------------------------
+# spring:
+#   datasource:              # 阶段 4：连数据库
+#     url: jdbc:mysql://localhost:3306/train_ticket?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai
+#     username: root
+#     password: 你的密码
+#     driver-class-name: com.mysql.cj.jdbc.Driver

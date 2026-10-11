@@ -1,0 +1,33 @@
+# ---- IDEA / JetBrains ----
+.idea/
+*.iml
+*.iws
+*.ipr
+
+# ---- Java / Maven ----
+target/
+*.class
+!.mvn/wrapper/maven-wrapper.jar
+
+# ---- 前端 ----
+node_modules/
+dist/
+npm-debug.log*
+pnpm-debug.log*
+yarn-error.log*
+
+# ---- 本地配置（数据库密码等，不要提交） ----
+application-local.yml
+application-local.yaml
+.env.local
+.env.*.local
+
+# ---- 日志与临时文件 ----
+*.log
+logs/
+*.tmp
+
+# ---- 操作系统 ----
+.DS_Store
+Thumbs.db
+desktop.ini
