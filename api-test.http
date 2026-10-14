@@ -1,0 +1,222 @@
+### ==========================================================
+### 接口测试文件
+### 在 IDEA 里打开本文件，每个 ### 开头的请求左边都有个绿色小三角，
+### 点一下就能直接发请求，不用开 Postman。
+### 发请求前请先确保后端已经启动（跑 TicketApplication）。
+### ==========================================================
+
+
+### 1. 服务存活探针
+GET http://localhost:8080/api/public/ping
+
+
+### 2. 数据库连通探针
+GET http://localhost:8080/api/public/db-check
+
+
+### 3. 注册成功（这是阶段 2 的第一个接口）
+POST http://localhost:8080/api/user/auth/register
+Content-Type: application/json
+
+{
+  "username": "zhangsan",
+  "password": "123456",
+  "nickname": "张三",
+  "phone": "13800000000"
+}
+
+
+### 4. 再点一次上面那个请求 —— 应该报「用户名已存在」(1001)
+###    这说明唯一索引和重复检查都生效了
+
+
+### 5. 密码太短 —— 应该报「密码长度要在 6 到 20 位之间」(400)
+POST http://localhost:8080/api/user/auth/register
+Content-Type: application/json
+
+{
+  "username": "lisi",
+  "password": "123",
+  "nickname": "李四"
+}
+
+
+### 6. 用户名带非法字符 —— 应该报「用户名只能包含字母、数字和下划线」(400)
+POST http://localhost:8080/api/user/auth/register
+Content-Type: application/json
+
+{
+  "username": "wang wu!",
+  "password": "123456"
+}
+
+
+### 7. 不填手机号 —— 应该注册成功
+###    注意：这条和下面那条连着点，都不填手机号，都不能失败
+###    （因为空字符串转成了 NULL，MySQL 唯一索引允许多个 NULL 并存）
+POST http://localhost:8080/api/user/auth/register
+Content-Type: application/json
+
+{
+  "username": "wangwu",
+  "password": "123456"
+}
+
+
+### 8. 另一个也不填手机号 —— 同样应该成功
+POST http://localhost:8080/api/user/auth/register
+Content-Type: application/json
+
+{
+  "username": "zhaoliu",
+  "password": "123456"
+}
+
+
+### ==========================================================
+### 阶段 2 第 2 个接口：登录
+### ==========================================================
+
+
+### 9. 登录成功 —— 会返回一串 token
+###    把 data.token 的值复制出来，粘到 https://jwt.io 上看里面写了什么
+###    （这就是最直观的一课：JWT 只是 Base64 编码，不是加密）
+POST http://localhost:8080/api/user/auth/login
+Content-Type: application/json
+
+{
+  "username": "zhangsan",
+  "password": "123456"
+}
+
+
+### 10. 密码故意输错 —— 应该报「用户名或密码错误」(1002)
+POST http://localhost:8080/api/user/auth/login
+Content-Type: application/json
+
+{
+  "username": "zhangsan",
+  "password": "wrong-password"
+}
+
+
+### 11. 用户名根本不存在 —— 应该报**一模一样**的「用户名或密码错误」(1002)
+###     和第 10 条对比一下：两种完全不同的原因，提示语必须一样，
+###     否则攻击者就能靠提示语差别一个个试出哪些用户名是存在的
+POST http://localhost:8080/api/user/auth/login
+Content-Type: application/json
+
+{
+  "username": "nobody_here",
+  "password": "123456"
+}
+
+
+### 12. 密码留空 —— 应该被参数校验挡下来 (400)
+POST http://localhost:8080/api/user/auth/login
+Content-Type: application/json
+
+{
+  "username": "zhangsan",
+  "password": ""
+}
+
+
+### ==========================================================
+### 阶段 2 第 3 个接口：查当前登录人（需要登录）
+### 下面这几条是验证拦截器是否生效的关键
+### ==========================================================
+
+
+### 13. 登录，并把返回的 token 自动存进变量 token
+###     （> {% %} 是 IDEA 的响应处理脚本，点完这一条后面就能用 {{token}}）
+POST http://localhost:8080/api/user/auth/login
+Content-Type: application/json
+
+{
+  "username": "zhangsan",
+  "password": "123456"
+}
+
+> {%
+    client.test("登录成功", function () {
+        client.assert(response.body.code === 200, "登录失败：" + response.body.msg);
+    });
+    if (response.body.code === 200) {
+        client.global.set("token", response.body.data.token);
+    }
+%}
+
+
+### 14. 带着 token 请求 /me —— 期望 200，返回自己的信息（没有 password）
+GET http://localhost:8080/api/user/auth/me
+Authorization: Bearer {{token}}
+
+> {%
+    client.test("能拿到自己的信息", function () {
+        client.assert(response.body.code === 200, "期望 200，实际 " + response.body.code);
+        client.assert(response.body.data.username === "zhangsan",
+            "期望 zhangsan，实际 " + response.body.data.username);
+        client.assert(response.body.data.password === undefined,
+            "响应里不应该出现 password 字段");
+    });
+%}
+
+
+### 15. 不带 token 请求 /me —— 期望被拦截器挡住，返回 401
+GET http://localhost:8080/api/user/auth/me
+
+> {%
+    client.test("不带 token 应该被挡成 401", function () {
+        client.assert(response.body.code === 401, "期望 401，实际 " + response.body.code);
+    });
+%}
+
+
+### 16. 在 token 末尾加一个字符再请求 —— 签名对不上，期望 401
+###     这条能过，说明「token 被篡改」真的会被发现
+GET http://localhost:8080/api/user/auth/me
+Authorization: Bearer {{token}}x
+
+> {%
+    client.test("token 被篡改应该被挡成 401", function () {
+        client.assert(response.body.code === 401, "期望 401，实际 " + response.body.code);
+    });
+%}
+
+
+### 17. 换成另一个账号登录（覆盖掉变量里的 token）
+###     这里用 wangwu，不要用 lisi ——
+###     第 5 条本来想注册 lisi，但那条的密码只写了 3 位，被校验挡下来了，
+###     所以数据库里根本没有 lisi 这个账号。
+POST http://localhost:8080/api/user/auth/login
+Content-Type: application/json
+
+{
+  "username": "wangwu",
+  "password": "123456"
+}
+
+> {%
+    client.test("wangwu 登录成功", function () {
+        client.assert(response.body.code === 200, "登录失败：" + response.body.msg);
+    });
+    if (response.body.code === 200) {
+        client.global.set("token", response.body.data.token);
+    }
+%}
+
+
+### 18. 用 wangwu 的 token 请求 /me —— 期望返回 wangwu，而不是 zhangsan
+###     这条在验证 ThreadLocal 有没有清干净：
+###     如果这里返回了张三，说明 afterCompletion 里的 clear() 没生效
+GET http://localhost:8080/api/user/auth/me
+Authorization: Bearer {{token}}
+
+> {%
+    client.test("返回的应该是 wangwu，不是上一个人", function () {
+        client.assert(response.body.code === 200, "期望 200，实际 " + response.body.code);
+        client.assert(response.body.data.username === "wangwu",
+            "期望 wangwu，实际 " + response.body.data.username);
+    });
+%}
