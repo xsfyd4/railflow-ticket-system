@@ -10,16 +10,40 @@ spring:
   application:
     name: train-ticket-backend
 
+  # ----------------------------------------------------------
+  #  数据库连接（阶段 2 新增）
+  #  ★ password 那一行必须改成你自己装 MySQL 时设的密码
+  # ----------------------------------------------------------
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://localhost:3306/train_ticket?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+    username: root
+    password: REMOVED_SECRET
+    hikari:
+      maximum-pool-size: 10      # 最多同时开 10 个连接
+      minimum-idle: 2            # 空闲时保留 2 个
+      connection-timeout: 5000   # 5 秒连不上就报错，别一直卡着
+
 logging:
   level:
     com.ticket: debug       # 只把自己写的包打成 debug，别让 Spring 的日志刷屏
 
 # ------------------------------------------------------------
-#  下面这些等对应阶段再打开，现在启用会启动报错
+#  JWT 配置（阶段 2 新增）
 # ------------------------------------------------------------
-# spring:
-#   datasource:              # 阶段 4：连数据库
-#     url: jdbc:mysql://localhost:3306/train_ticket?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai
-#     username: root
-#     password: 你的密码
-#     driver-class-name: com.mysql.cj.jdbc.Driver
+ticket:
+  jwt:
+    # 签名密钥。HS256 算法要求至少 32 字节（256 位），太短 jjwt 启动就报错。
+    # ★ 真实项目里这个值必须放进环境变量，绝不能提交到 Git——
+    #   泄露了别人就能自己签发任意用户的 token。
+    secret: train-ticket-dev-secret-key-change-me-2026
+    # token 有效期，单位秒。604800 秒 = 7 天
+    expire-seconds: 604800
+    # 签发者标识，解析时会校验，防止别的系统签的 token 混进来
+    issuer: train-ticket
+
+# ------------------------------------------------------------
+#  小提醒：密码明文写在配置文件里，本地练习没问题，
+#  但真实项目里这个文件是要提交到 Git 的，密码会泄露。
+#  届时的做法是拆一个 application-local.yml（已被 .gitignore 忽略）来放密码。
+# ------------------------------------------------------------

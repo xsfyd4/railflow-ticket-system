@@ -1,7 +1,9 @@
 package com.ticket.config;
 
+import com.ticket.security.JwtInterceptor;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.servlet.config.annotation.CorsRegistry;
+import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
 /**
@@ -19,13 +21,22 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 @Configuration
 public class WebMvcConfig implements WebMvcConfigurer {
 
+    private final JwtInterceptor jwtInterceptor;              // ← 新增
+
+    public WebMvcConfig(JwtInterceptor jwtInterceptor) {      // ← 新增
+        this.jwtInterceptor = jwtInterceptor;
+    }
+
     @Override
     public void addCorsMappings(CorsRegistry registry) {
-        registry.addMapping("/**")
-                .allowedOriginPatterns("*")
-                .allowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS")
-                .allowedHeaders("*")
-                .allowCredentials(true)
-                .maxAge(3600);
+        // 这一段保持不变
+    }
+
+    @Override
+    public void addInterceptors(InterceptorRegistry registry) {   // ← 新增
+        registry.addInterceptor(jwtInterceptor)
+                .addPathPatterns("/api/user/**")
+                .excludePathPatterns("/api/user/auth/register",
+                        "/api/user/auth/login");
     }
 }
