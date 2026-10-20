@@ -2,6 +2,8 @@ package com.ticket.module.auth;
 
 import com.ticket.common.result.R;
 import com.ticket.module.auth.dto.LoginDTO;
+import com.ticket.module.auth.entity.SysAdmin;
+import com.ticket.module.auth.mapper.SysAdminMapper;
 import com.ticket.module.auth.vo.AdminLoginVO;
 import com.ticket.module.auth.vo.AdminVO;
 import jakarta.validation.Valid;
@@ -60,7 +62,6 @@ public class AdminAuthController {
      */
     @GetMapping("/me")
     public R<AdminVO> me() {
-        // TODO
-        throw new UnsupportedOperationException("TODO: 查当前管理员接口");
+       return(R.ok(adminAuthService.getCurrentAdmin()));
     }
 }

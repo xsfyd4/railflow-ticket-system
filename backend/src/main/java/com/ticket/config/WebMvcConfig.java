@@ -1,5 +1,6 @@
 package com.ticket.config;
 
+import com.ticket.security.AdminJwtInterceptor;
 import com.ticket.security.JwtInterceptor;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.servlet.config.annotation.CorsRegistry;
@@ -21,22 +22,36 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 @Configuration
 public class WebMvcConfig implements WebMvcConfigurer {
 
-    private final JwtInterceptor jwtInterceptor;              // ← 新增
+    private final JwtInterceptor jwtInterceptor;
+    private final AdminJwtInterceptor adminJwtInterceptor;
 
-    public WebMvcConfig(JwtInterceptor jwtInterceptor) {      // ← 新增
+    public WebMvcConfig(JwtInterceptor jwtInterceptor,
+                        AdminJwtInterceptor adminJwtInterceptor) {
         this.jwtInterceptor = jwtInterceptor;
+        this.adminJwtInterceptor = adminJwtInterceptor;
     }
 
     @Override
     public void addCorsMappings(CorsRegistry registry) {
-        // 这一段保持不变
+        registry.addMapping("/**")
+                .allowedOriginPatterns("*")
+                .allowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS")
+                .allowedHeaders("*")
+                .allowCredentials(true)
+                .maxAge(3600);
     }
 
     @Override
-    public void addInterceptors(InterceptorRegistry registry) {   // ← 新增
+    public void addInterceptors(InterceptorRegistry registry) {
+        // 用户端：除注册和登录外，全部要求 token
         registry.addInterceptor(jwtInterceptor)
                 .addPathPatterns("/api/user/**")
                 .excludePathPatterns("/api/user/auth/register",
                         "/api/user/auth/login");
+
+        // 管理端：除登录外，全部要求 token 且角色必须是 ADMIN
+        registry.addInterceptor(adminJwtInterceptor)
+                .addPathPatterns("/api/admin/**")
+                .excludePathPatterns("/api/admin/auth/login");
     }
 }

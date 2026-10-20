@@ -72,7 +72,12 @@ public class AuthServiceImpl implements AuthService {
 
         // 3. 落库
         try {
-            return sysUserMapper.insert(user);
+            // 换成 MyBatis 之后，insert 的返回值变成了"影响行数"，不再是主键。
+            // 主键去哪了？被 MyBatis 写回到 user 对象里了
+            // （XML 的 insert 上配了 useGeneratedKeys + keyProperty="id"）。
+            // 所以下一行直接 user.getId() 就能拿到数据库生成的新主键。
+            sysUserMapper.insert(user);
+            return user.getId();
         } catch (DuplicateKeyException e) {
             // 上面查过一次，为什么还要再兜一层？
             // 因为「查询」和「插入」之间有极小的时间窗口：

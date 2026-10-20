@@ -1,61 +1,33 @@
 package com.ticket.module.auth.mapper;
 
 import com.ticket.module.auth.entity.SysAdmin;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.core.RowMapper;
-import org.springframework.stereotype.Repository;
+import org.apache.ibatis.annotations.Mapper;
+import org.apache.ibatis.annotations.Param;
 
 /**
- * sys_admin 表的数据访问层。
+ * sys_admin 表的数据访问层（MyBatis 版）。
  *
- * <p>对照 SysUserMapper 写。管理员现在只需要一个能力：
- * 按用户名查出来，给登录校验用。
+ * <p>对照 {@link SysUserMapper} 写。管理员现在需要两个能力：
+ * 按用户名查（登录校验用）、按 id 查（查当前登录人用）。
  *
- * <p>规矩不变：<b>只执行 SQL，不做业务判断</b>。
+ * <p>规矩不变：**只执行 SQL，不做业务判断**。
  * 「密码对不对」是业务规则，写在 Service 里。
  */
-@Repository
-public class SysAdminMapper {
+@Mapper
+public interface SysAdminMapper {
+
+    /** 按用户名查管理员，查不到返回 null。对应 XML 里的 findByUsername */
+    SysAdmin findByUsername(@Param("username") String username);
 
     /**
-     * 查询时取哪几列？
+     * 按主键查管理员，查不到返回 null。对应 XML 里的 findById。
      *
-     * <p>提示：只取 SysAdmin 这个类里声明过的字段，而且要和它一一对应。
-     * created_at / updated_at 用不到，不要取——取了也没地方放。
+     * <p>为什么「查当前登录人」要按 id 查，而不是按用户名？
+     * 因为**用户名是可以改的**。token 里存的是签发那一刻的用户名，
+     * 如果管理员后来改了用户名，用旧名字去查就会查不到，用户会莫名其妙被踢下线。
+     * 而主键 id 一旦生成就不会变，是稳定的身份标识。
      *
-     * <p>格式参考 SysUserMapper 里的 USER_COLUMNS：一串用逗号分开的列名。
+     * <p>这也是一个通用原则：**拿来做身份定位的字段，要选不会变的那个。**
      */
-    private static final String ADMIN_COLUMNS =
-            // TODO 填列名
-            "TODO";
-
-    /**
-     * 结果集的一行 → SysAdmin 对象。
-     *
-     * <p>对照 SysUserMapper.ROW_MAPPER 写。列名和字段名的对应关系：
-     * real_name → realName，last_login_at → lastLoginAt。
-     *
-     * <p>提示：last_login_at 在数据库里可能是 NULL（从没登录过），
-     * 直接 getTimestamp() 再 toLocalDateTime() 会空指针，要判断一下。
-     */
-    private static final RowMapper<SysAdmin> ROW_MAPPER = (rs, rowNum) -> {
-        // TODO
-        throw new UnsupportedOperationException("TODO: 结果集转 SysAdmin");
-    };
-
-    private final JdbcTemplate jdbcTemplate;
-
-    public SysAdminMapper(JdbcTemplate jdbcTemplate) {
-        this.jdbcTemplate = jdbcTemplate;
-    }
-
-    /**
-     * 按用户名查管理员，查不到返回 null。
-     *
-     * <p>对照 SysUserMapper.findByUsername 写，SQL 里记得用 ADMIN_COLUMNS。
-     */
-    public SysAdmin findByUsername(String username) {
-        // TODO
-        throw new UnsupportedOperationException("TODO: 按用户名查管理员");
-    }
+    SysAdmin findById(@Param("id") Long id);
 }

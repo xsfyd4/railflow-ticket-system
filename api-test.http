@@ -220,3 +220,334 @@ Authorization: Bearer {{token}}
             "期望 wangwu，实际 " + response.body.data.username);
     });
 %}
+
+
+### ==========================================================
+### 管理端测试
+### 重点验证「权限隔离」：普通用户能登录，但进不了管理端
+### 前置条件：sys_admin 表里要有 admin / 123456（已插入）
+### ==========================================================
+
+
+### 19. 管理员登录，token 存进 adminToken 变量
+POST http://localhost:8080/api/admin/auth/login
+Content-Type: application/json
+
+{
+  "username": "admin",
+  "password": "123456"
+}
+
+> {%
+    client.test("管理员登录成功", function () {
+        client.assert(response.body.code === 200, "登录失败：" + response.body.msg);
+    });
+    if (response.body.code === 200) {
+        client.global.set("adminToken", response.body.data.token);
+    }
+%}
+
+
+### 20. 带 adminToken 请求管理端 /me —— 期望 200
+GET http://localhost:8080/api/admin/auth/me
+Authorization: Bearer {{adminToken}}
+
+> {%
+    client.test("管理员能拿到自己的信息", function () {
+        client.assert(response.body.code === 200, "期望 200，实际 " + response.body.code);
+        client.assert(response.body.data.username === "admin",
+            "期望 admin，实际 " + response.body.data.username);
+        client.assert(response.body.data.role === "SUPER",
+            "期望 SUPER，实际 " + response.body.data.role);
+        client.assert(response.body.data.password === undefined,
+            "响应里不应该出现 password 字段");
+    });
+%}
+
+
+### 21. 不带 token 请求管理端 /me —— 期望 401
+GET http://localhost:8080/api/admin/auth/me
+
+> {%
+    client.test("不带 token 应该被挡成 401", function () {
+        client.assert(response.body.code === 401, "期望 401，实际 " + response.body.code);
+    });
+%}
+
+
+### 22. 先拿一个普通用户的 token
+POST http://localhost:8080/api/user/auth/login
+Content-Type: application/json
+
+{
+  "username": "zhangsan",
+  "password": "123456"
+}
+
+> {%
+    client.test("普通用户登录成功", function () {
+        client.assert(response.body.code === 200, "登录失败：" + response.body.msg);
+    });
+    if (response.body.code === 200) {
+        client.global.set("userToken", response.body.data.token);
+    }
+%}
+
+
+### 23. ★★ 用普通用户的 token 调管理端接口 —— 期望 403
+###     这一条是整个权限隔离的核心验收点。
+###     如果它返回 200，说明 AdminJwtInterceptor 里没有做角色判断。
+GET http://localhost:8080/api/admin/auth/me
+Authorization: Bearer {{userToken}}
+
+> {%
+    client.test("普通用户 token 应该被 403 挡住", function () {
+        client.assert(response.body.code === 403, "期望 403，实际 " + response.body.code);
+    });
+%}
+
+
+### 24. 用管理员的 token 调用户端接口 —— 记录当前行为
+###     现在 JwtInterceptor 只验 token 真假、不查角色，所以管理员 token 能通行。
+###     这是不是一个问题，取决于你的产品定义：
+###       - 允许：管理员也是人，能查自己的用户信息（现在的行为）
+###       - 不允许：用户端拦截器也要加一条 role == USER 的检查
+GET http://localhost:8080/api/user/auth/me
+Authorization: Bearer {{adminToken}}
+
+> {%
+    client.test("记录：管理员 token 调用户端接口的结果", function () {
+        client.assert(response.body.code === 200 || response.body.code === 401,
+            "实际返回 " + response.body.code);
+    });
+%}
+
+
+### 25. 管理员密码错误 —— 期望 1002（和普通用户一样，不暴露是哪个字段错）
+POST http://localhost:8080/api/admin/auth/login
+Content-Type: application/json
+
+{
+  "username": "admin",
+  "password": "wrong-password"
+}
+
+> {%
+    client.test("管理员密码错误应该 1002", function () {
+        client.assert(response.body.code === 1002, "期望 1002，实际 " + response.body.code);
+    });
+%}
+
+
+### ==========================================================
+### 阶段 3：车站管理
+### 覆盖：分页、搜索、详情、新增、重名校验、修改、删除、删除保护、公开搜索
+### 注意：第 26 条会重新拿一次 adminToken，所以这一段可以单独跑
+### ==========================================================
+
+
+### 26. 管理员登录（拿 token，后面所有管理端请求都要它）
+POST http://localhost:8080/api/admin/auth/login
+Content-Type: application/json
+
+{
+  "username": "admin",
+  "password": "123456"
+}
+
+> {%
+    client.test("管理员登录成功", function () {
+        client.assert(response.body.code === 200, "登录失败：" + response.body.msg);
+    });
+    if (response.body.code === 200) {
+        client.global.set("adminToken", response.body.data.token);
+    }
+%}
+
+
+### 27. 分页查询：第 1 页，每页 3 条
+### 期望 total >= 5，records 正好 3 条
+GET http://localhost:8080/api/admin/stations?page=1&size=3
+Authorization: Bearer {{adminToken}}
+
+> {%
+    client.test("分页查询成功", function () {
+        client.assert(response.body.code === 200, "期望 200，实际 " + response.body.code);
+        client.assert(response.body.data.total >= 5,
+            "期望 total >= 5，实际 " + response.body.data.total);
+        client.assert(response.body.data.records.length === 3,
+            "期望 3 条，实际 " + response.body.data.records.length);
+    });
+%}
+
+
+### 28. 关键词搜索：北京
+### 期望至少 1 条（北京南既匹配站名，也匹配拼音 beijingnan）
+GET http://localhost:8080/api/admin/stations?keyword=北京&page=1&size=10
+Authorization: Bearer {{adminToken}}
+
+> {%
+    client.test("关键词搜索有结果", function () {
+        client.assert(response.body.code === 200, "期望 200，实际 " + response.body.code);
+        client.assert(response.body.data.records.length >= 1,
+            "期望 >= 1 条，实际 " + response.body.data.records.length);
+    });
+%}
+
+
+### 29. 查详情：id = 1
+GET http://localhost:8080/api/admin/stations/1
+Authorization: Bearer {{adminToken}}
+
+> {%
+    client.test("能查到北京南", function () {
+        client.assert(response.body.code === 200, "期望 200，实际 " + response.body.code);
+        client.assert(response.body.data.stationName === "北京南",
+            "期望 北京南，实际 " + response.body.data.stationName);
+    });
+%}
+
+
+### 30. 查不存在的车站：id = 999
+### 期望 3002（不是 200 + data:null）
+GET http://localhost:8080/api/admin/stations/999
+Authorization: Bearer {{adminToken}}
+
+> {%
+    client.test("查不到应该返回 3002", function () {
+        client.assert(response.body.code === 3002, "期望 3002，实际 " + response.body.code);
+    });
+%}
+
+
+### 31. 新增车站：天津南
+### 返回的 data 是新车站的 id，存进变量供后面用
+### ⚠️ 如果这里返回 3001，说明 TJP 已存在（上次跑到一半），
+###    先手动删掉它，或者把下面三处 TJP 换成别的码
+POST http://localhost:8080/api/admin/stations
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+  "stationCode": "TJP",
+  "stationName": "天津南",
+  "city": "天津",
+  "province": "天津市",
+  "pinyin": "tianjinnan",
+  "pinyinAbbr": "tjn"
+}
+
+> {%
+    client.test("新增成功并返回新 id", function () {
+        client.assert(response.body.code === 200, "新增失败：" + response.body.msg);
+        client.assert(typeof response.body.data === "number",
+            "data 应该是新 id，实际是 " + typeof response.body.data);
+    });
+    if (response.body.code === 200) {
+        client.global.set("newStationId", response.body.data);
+    }
+%}
+
+
+### 32. 再新增一次同样的三字码
+### 期望 3001（三字码已存在）
+POST http://localhost:8080/api/admin/stations
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+  "stationCode": "TJP",
+  "stationName": "天津南",
+  "city": "天津"
+}
+
+> {%
+    client.test("三字码重复应该 3001", function () {
+        client.assert(response.body.code === 3001, "期望 3001，实际 " + response.body.code);
+    });
+%}
+
+
+### 33. 修改刚新增的车站：只改名，三字码不变
+### 这条专门验证「代码没变 + 能正常更新」
+PUT http://localhost:8080/api/admin/stations/{{newStationId}}
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+  "stationCode": "TJP",
+  "stationName": "天津南站",
+  "city": "天津",
+  "province": "天津市",
+  "pinyin": "tianjinnan",
+  "pinyinAbbr": "tjn"
+}
+
+> {%
+    client.test("修改成功", function () {
+        client.assert(response.body.code === 200, "期望 200，实际 " + response.body.code);
+    });
+%}
+
+
+### 34. 再查一次，确认名字真的改了
+GET http://localhost:8080/api/admin/stations/{{newStationId}}
+Authorization: Bearer {{adminToken}}
+
+> {%
+    client.test("名字已经更新", function () {
+        client.assert(response.body.code === 200, "期望 200，实际 " + response.body.code);
+        client.assert(response.body.data.stationName === "天津南站",
+            "期望 天津南站，实际 " + response.body.data.stationName);
+    });
+%}
+
+
+### 35. 删除刚新增的车站（它没被任何车次引用）
+### 期望 200
+DELETE http://localhost:8080/api/admin/stations/{{newStationId}}
+Authorization: Bearer {{adminToken}}
+
+> {%
+    client.test("未被引用的车站可以删", function () {
+        client.assert(response.body.code === 200, "期望 200，实际 " + response.body.code);
+    });
+%}
+
+
+### 36. 再查一次，确认真的删掉了
+### 期望 3002
+GET http://localhost:8080/api/admin/stations/{{newStationId}}
+Authorization: Bearer {{adminToken}}
+
+> {%
+    client.test("删掉之后查不到", function () {
+        client.assert(response.body.code === 3002, "期望 3002，实际 " + response.body.code);
+    });
+%}
+
+
+### 37. ★ 删除被车次引用的车站：id = 1（北京南）
+### 它被 G1001 的始发站、train_stop、train_segment 引用
+### 期望 3003（该车站已被车次使用，请改为禁用）
+DELETE http://localhost:8080/api/admin/stations/1
+Authorization: Bearer {{adminToken}}
+
+> {%
+    client.test("被引用的车站不能删", function () {
+        client.assert(response.body.code === 3003, "期望 3003，实际 " + response.body.code);
+    });
+%}
+
+
+### 38. 公开搜索：不带 token 也能访问
+### 这是用户端查票页的输入联想接口
+GET http://localhost:8080/api/public/stations?keyword=北京
+
+> {%
+    client.test("公开接口不需要登录", function () {
+        client.assert(response.body.code === 200, "期望 200，实际 " + response.body.code);
+        client.assert(response.body.data.length >= 1,
+            "期望 >= 1 条，实际 " + response.body.data.length);
+    });
+%}

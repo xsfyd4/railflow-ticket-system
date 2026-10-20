@@ -24,6 +24,19 @@ spring:
       minimum-idle: 2            # 空闲时保留 2 个
       connection-timeout: 5000   # 5 秒连不上就报错，别一直卡着
 
+# ------------------------------------------------------------
+#  MyBatis 配置
+# ------------------------------------------------------------
+mybatis:
+  # SQL 映射文件（XML）放在哪。
+  # classpath 指的就是 target/classes，对应源码里的 src/main/resources。
+  # 我们放在 resources/mapper/ 下，所以这里是 mapper/*.xml。
+  mapper-locations: classpath:mapper/*.xml
+  configuration:
+    # 开启驼峰自动映射：数据库的 real_name → Java 的 realName。
+    # 不开这个开关，就得为每张表手写一长串 <resultMap>。
+    map-underscore-to-camel-case: true
+
 logging:
   level:
     com.ticket: debug       # 只把自己写的包打成 debug，别让 Spring 的日志刷屏

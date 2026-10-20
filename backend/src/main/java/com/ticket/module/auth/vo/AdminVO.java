@@ -25,8 +25,15 @@ public class AdminVO {
      * 记得处理 admin 为 null 的情况（返回 null）。
      */
     public static AdminVO from(SysAdmin admin) {
-        // TODO
-        throw new UnsupportedOperationException("TODO: SysAdmin 转 AdminVO");
+        if (admin == null) {
+            return null;
+        }
+        AdminVO vo = new AdminVO();
+        vo.setId(admin.getId());
+        vo.setUsername(admin.getUsername());
+        vo.setRealName(admin.getRealName());
+        vo.setRole(admin.getRole());
+        return vo;
     }
 
     public Long getId() {

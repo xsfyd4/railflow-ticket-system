@@ -30,7 +30,11 @@ public enum ResultCode {
     TICKET_NOT_ENOUGH(2001, "该区间余票不足"),
     ORDER_STATUS_ERROR(2002, "订单当前状态不允许此操作"),
     ORDER_EXPIRED(2003, "订单已超时，请重新下单"),
-    TRAIN_NOT_FOUND(2004, "未找到符合条件的车次");
+    TRAIN_NOT_FOUND(2004, "未找到符合条件的车次"),
+
+    STATION_CODE_EXISTS(3001, "车站三字码已存在"),
+    STATION_NOT_FOUND(3002, "车站不存在"),
+    STATION_IN_USE(3003, "该车站已被车次使用，请改为禁用");
 
     private final int code;
     private final String msg;

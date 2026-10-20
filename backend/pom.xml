@@ -21,6 +21,7 @@
         <java.version>17</java.version>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <jjwt.version>0.12.6</jjwt.version>
+        <mybatis.version>4.1.0</mybatis.version>
     </properties>
 
     <dependencies>
@@ -47,6 +48,22 @@
             <groupId>com.mysql</groupId>
             <artifactId>mysql-connector-j</artifactId>
             <scope>runtime</scope>
+        </dependency>
+
+        <!--
+          MyBatis：数据访问层。
+
+          版本 4.1.0 是对应 Spring Boot 4.1.x 的那一版——
+          MyBatis 的 starter 版本号一直跟着 Spring Boot 走（2.x→Boot2，3.x→Boot3，4.x→Boot4），
+          所以看到 4.1.0 就知道是给你的环境用的。
+
+          注意它没有交给 Spring Boot 的父 POM 管理版本（不是 Spring 官方的东西），
+          所以必须自己写 <version>。
+        -->
+        <dependency>
+            <groupId>org.mybatis.spring.boot</groupId>
+            <artifactId>mybatis-spring-boot-starter</artifactId>
+            <version>${mybatis.version}</version>
         </dependency>
 
         <!-- 参数校验：让 @NotBlank、@Size 这些注解生效，不引它 @Valid 是空转的 -->
