@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.ticket.module.auth.mapper.SysAdminMapper">
+
+    <!--
+      注意这里比 SysUserMapper 少了 created_at 和 updated_at。
+
+      为什么？因为 SysAdmin 实体类里没有这两个字段。
+      查出来了也没地方放，MyBatis 会直接忽略——白让数据库多读两列。
+
+      **SQL 里查的列，应该和实体类的字段一一对应。**
+    -->
+    <sql id="baseColumns">
+        id, username, password, real_name, role, status, last_login_at
+    </sql>
+
+    <select id="findByUsername" resultType="com.ticket.module.auth.entity.SysAdmin">
+        SELECT <include refid="baseColumns"/>
+        FROM sys_admin
+        WHERE username = #{username}
+    </select>
+
+    <select id="findById" resultType="com.ticket.module.auth.entity.SysAdmin">
+        SELECT <include refid="baseColumns"/>
+        FROM sys_admin
+        WHERE id = #{id}
+    </select>
+
+</mapper>

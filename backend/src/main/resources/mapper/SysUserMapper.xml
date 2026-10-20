@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<!--
+  sys_user 表的 SQL 都写在这里。
+
+  namespace 必须是"接口的全限定名"，MyBatis 靠它把 XML 和接口关联起来。
+  写错 namespace 的后果和写错 id 一样：启动时报 Invalid bound statement (not found)。
+-->
+<mapper namespace="com.ticket.module.auth.mapper.SysUserMapper">
+
+    <!--
+      把重复的列名抽出来，用 <include> 引用。
+      作用等同于 Java 里的 private static final String USER_COLUMNS——
+      以后给表加字段，只改这一处，三个查询全都跟着变。
+    -->
+    <sql id="baseColumns">
+        id, username, password, phone, nickname, avatar, status, created_at, updated_at
+    </sql>
+
+    <!--
+      resultType：查询结果要映射成什么 Java 类。
+
+      你可能会问：数据库的列名是下划线（created_at），
+      Java 字段是驼峰（createdAt），MyBatis 怎么知道要对应？
+
+      靠 application.yml 里的 map-underscore-to-camel-case: true。
+      开了这个开关，MyBatis 会把 created_at 自动映射到 createdAt。
+      不开的话，你就得手写一长串 <resultMap> 告诉它每一列的对应关系。
+    -->
+    <select id="countByUsername" resultType="int">
+        SELECT COUNT(*) FROM sys_user WHERE username = #{username}
+    </select>
+
+    <select id="findByUsername" resultType="com.ticket.module.auth.entity.SysUser">
+        SELECT <include refid="baseColumns"/>
+        FROM sys_user
+        WHERE username = #{username}
+    </select>
+
+    <select id="findById" resultType="com.ticket.module.auth.entity.SysUser">
+        SELECT <include refid="baseColumns"/>
+        FROM sys_user
+        WHERE id = #{id}
+    </select>
+
+    <!--
+      #{username} 会被翻译成 JDBC 的 ? 占位符，值作为"数据"发给数据库，
+      所以 SQL 注入不了——和之前 JdbcTemplate 里用 ? 是同一个道理。
+
+      对比一下 ${} （美元符号）：它是直接字符串拼接，能被注入，**永远不要用**。
+      这是 MyBatis 最经典的一个坑，面试常问。
+
+      useGeneratedKeys + keyProperty：插入后把自增主键写回 user.id。
+    -->
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO sys_user (username, password, phone, nickname, status)
+        VALUES (#{username}, #{password}, #{phone}, #{nickname}, #{status})
+    </insert>
+
+</mapper>

@@ -1,0 +1,153 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<!--
+  station 表的 SQL。namespace 必须等于 StationMapper 接口的全限定名。
+  每个标签的 id 必须等于接口里的方法名。
+-->
+<mapper namespace="com.ticket.module.station.mapper.StationMapper">
+
+    <!-- 查询时统一取这些列 -->
+    <sql id="baseColumns">
+        id, station_code, station_name, city, province,
+        pinyin, pinyin_abbr, status, created_at, updated_at
+    </sql>
+
+    <!--
+      列表和计数共用的 WHERE 条件。
+
+      抽成 <sql> 片段是为了保证 findPage 和 countByQuery 的条件永远一致——
+      如果各写一份，改了一处忘了另一处，前端算出来的总页数就是错的。
+    -->
+    <sql id="queryWhere">
+        <where>
+            <if test="query.keyword != null and query.keyword != ''">
+                AND (station_name LIKE CONCAT('%', #{query.keyword}, '%')
+                  OR pinyin      LIKE CONCAT('%', #{query.keyword}, '%')
+                  OR pinyin_abbr LIKE CONCAT('%', #{query.keyword}, '%'))
+            </if>
+            <if test="query.city != null and query.city != ''">
+                AND city = #{query.city}
+            </if>
+            <if test="query.status != null">
+                AND status = #{query.status}
+            </if>
+        </where>
+    </sql>
+
+    <!--
+      分页查询。
+
+      · ORDER BY id 必须写：不排序的话，翻页时数据库返回的顺序不保证，
+        可能出现重复或遗漏。
+      · LIMIT 和 OFFSET 接收的是预处理参数，安全。
+      · offset = (page - 1) * size，由 Service 算好传进来。
+    -->
+    <select id="findPage" resultType="com.ticket.module.station.entity.Station">
+        SELECT <include refid="baseColumns"/>
+        FROM station
+        <include refid="queryWhere"/>
+        ORDER BY id
+        LIMIT #{query.size} OFFSET #{offset}
+    </select>
+
+    <!-- 总数。条件复用 queryWhere，保证和 findPage 一致 -->
+    <select id="countByQuery" resultType="long">
+        SELECT COUNT(*)
+        FROM station
+        <include refid="queryWhere"/>
+    </select>
+
+    <select id="findById" resultType="com.ticket.module.station.entity.Station">
+        SELECT <include refid="baseColumns"/>
+        FROM station
+        WHERE id = #{id}
+    </select>
+
+    <select id="findByCode" resultType="com.ticket.module.station.entity.Station">
+        SELECT <include refid="baseColumns"/>
+        FROM station
+        WHERE station_code = #{stationCode}
+    </select>
+
+    <!--
+      新增。
+      useGeneratedKeys + keyProperty：把数据库自增的 id 写回 station 对象的 id 字段，
+      这样调用完之后 station.getId() 就能拿到新主键。
+
+      created_at / updated_at 不写——表定义里有 DEFAULT CURRENT_TIMESTAMP，
+      数据库会自动填。
+    -->
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO station
+            (station_code, station_name, city, province, pinyin, pinyin_abbr, status)
+        VALUES
+            (#{stationCode}, #{stationName}, #{city}, #{province},
+             #{pinyin}, #{pinyinAbbr}, #{status})
+    </insert>
+
+    <!--
+      修改（全量覆盖）。
+      updated_at 有 ON UPDATE CURRENT_TIMESTAMP，数据库自动维护，不用写。
+
+      注意：status 是 NOT NULL 列，Service 里必须保证传进来的值不是 null
+      （新增时默认 1，修改时如果没传就沿用原记录的 status），
+      否则这里会报 "Column 'status' cannot be null"。
+    -->
+    <update id="update">
+        UPDATE station
+        SET station_code = #{stationCode},
+            station_name = #{stationName},
+            city         = #{city},
+            province     = #{province},
+            pinyin       = #{pinyin},
+            pinyin_abbr  = #{pinyinAbbr},
+            status       = #{status}
+        WHERE id = #{id}
+    </update>
+
+    <delete id="deleteById">
+        DELETE FROM station
+        WHERE id = #{id}
+    </delete>
+
+    <!--
+      统计这个车站被引用了多少次。
+
+      五个位置都要查：车次的始发站、终到站，停站表，分段表的起点和终点。
+      返回 > 0 就说明删了会破坏现有数据，只能改成禁用。
+    -->
+    <select id="countReferences" resultType="long">
+        SELECT
+            (SELECT COUNT(*) FROM train         WHERE start_station_id = #{stationId})
+          + (SELECT COUNT(*) FROM train         WHERE end_station_id   = #{stationId})
+          + (SELECT COUNT(*) FROM train_stop    WHERE station_id       = #{stationId})
+          + (SELECT COUNT(*) FROM train_segment WHERE from_station_id  = #{stationId})
+          + (SELECT COUNT(*) FROM train_segment WHERE to_station_id    = #{stationId})
+    </select>
+
+    <!--
+      公开搜索：给用户端查票页的输入联想用。
+
+      和 findPage 的区别：
+        · 只返回启用状态的车站（停用的不给用户看）
+        · 不分页，硬限制 20 条
+        · keyword 为空时只按 status = 1 过滤
+    -->
+    <select id="searchOptions" resultType="com.ticket.module.station.entity.Station">
+        SELECT <include refid="baseColumns"/>
+        FROM station
+        <where>
+            status = 1
+            <if test="keyword != null and keyword != ''">
+                AND (station_name LIKE CONCAT('%', #{keyword}, '%')
+                  OR pinyin      LIKE CONCAT('%', #{keyword}, '%')
+                  OR pinyin_abbr LIKE CONCAT('%', #{keyword}, '%'))
+            </if>
+        </where>
+        ORDER BY id
+        LIMIT 20
+    </select>
+
+</mapper>
