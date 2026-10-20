@@ -36,10 +36,11 @@ public class StationServiceImpl implements StationService {
     @Override
     public PageResult<StationVO> page(StationQueryDTO query) {
         // 1. 兜底：page 最小 1，size 限制在 1~100
-        int page = (query.getPage() == null || query.getPage() < 1) ? 1 : query.getPage();
-        int size = (query.getSize() == null || query.getSize() < 1) ? 10 : query.getSize();
-        if (size > 100) {
-            size = 100;
+
+        int page=(query.getPage()==null||query.getPage()<1)?1:query.getPage();
+        int size=(query.getSize()==null||query.getSize()<1)?10:query.getSize();
+        if (size>100){
+            size=100;
         }
 
         // ★ 把修正后的值写回 query。

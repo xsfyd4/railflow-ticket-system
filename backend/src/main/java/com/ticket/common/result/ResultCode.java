@@ -34,7 +34,10 @@ public enum ResultCode {
 
     STATION_CODE_EXISTS(3001, "车站三字码已存在"),
     STATION_NOT_FOUND(3002, "车站不存在"),
-    STATION_IN_USE(3003, "该车站已被车次使用，请改为禁用");
+    STATION_IN_USE(3003, "该车站已被车次使用，请改为禁用"),
+
+    TRAIN_NO_EXISTS(3004, "车次号已存在"),
+    TRAIN_IN_USE(3005, "该车次已有订单，不能删除");
 
     private final int code;
     private final String msg;

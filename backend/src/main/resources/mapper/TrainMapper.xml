@@ -1,0 +1,151 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.ticket.module.train.mapper.TrainMapper">
+
+    <!-- ================= 列定义 ================= -->
+
+    <!-- 映射到 Train 实体（只有表里的列） -->
+    <sql id="baseColumns">
+        t.id, t.train_no, t.train_type, t.start_station_id, t.end_station_id,
+        t.total_mileage, t.status, t.remark, t.created_at, t.updated_at
+    </sql>
+
+    <!--
+      映射到 TrainVO（多了两个站名）。
+
+      注意 AS 别名：start_station_name。
+      配合 map-underscore-to-camel-case，它会自动映射到 VO 的 startStationName。
+      **别名写错，这两个字段就是 null，而且不报错**——这是 JOIN 查询最常见的坑。
+    -->
+    <sql id="voColumns">
+        t.id, t.train_no, t.train_type,
+        t.start_station_id, s1.station_name AS start_station_name,
+        t.end_station_id,   s2.station_name AS end_station_name,
+        t.total_mileage, t.status, t.remark
+    </sql>
+
+    <!--
+      两个 JOIN 各查一次 station：一次取始发站，一次取终到站。
+      所以必须给 station 起两个不同的别名（s1、s2），否则会冲突。
+
+      为什么用 LEFT JOIN 而不是 INNER JOIN？
+      INNER JOIN 在车站找不到时会**整行消失**（车次直接查不出来）；
+      LEFT JOIN 至少能返回车次，站名是 null。
+      对管理端来说，「车次存在但站名缺失」比「车次不见了」好排查得多。
+    -->
+    <sql id="voJoins">
+        FROM train t
+        LEFT JOIN station s1 ON s1.id = t.start_station_id
+        LEFT JOIN station s2 ON s2.id = t.end_station_id
+    </sql>
+
+    <!--
+      列表和计数共用同一段 WHERE。
+      所有条件都带 t. 前缀，所以 countByQuery 不加 JOIN 也能用。
+    -->
+    <sql id="queryWhere">
+        <where>
+            <if test="query.trainNo != null and query.trainNo != ''">
+                AND t.train_no LIKE CONCAT('%', #{query.trainNo}, '%')
+            </if>
+            <if test="query.trainType != null and query.trainType != ''">
+                AND t.train_type = #{query.trainType}
+            </if>
+            <if test="query.status != null">
+                AND t.status = #{query.status}
+            </if>
+        </where>
+    </sql>
+
+    <!-- ================= 查询 ================= -->
+
+    <select id="findPage" resultType="com.ticket.module.train.vo.TrainVO">
+        SELECT <include refid="voColumns"/>
+        <include refid="voJoins"/>
+        <include refid="queryWhere"/>
+        ORDER BY t.id
+        LIMIT #{query.size} OFFSET #{offset}
+    </select>
+
+    <!--
+      总数不需要 JOIN——站名不影响条数，多 JOIN 两次纯属浪费。
+      条件复用 queryWhere 保证和 findPage 一致。
+    -->
+    <select id="countByQuery" resultType="long">
+        SELECT COUNT(*)
+        FROM train t
+        <include refid="queryWhere"/>
+    </select>
+
+    <select id="findById" resultType="com.ticket.module.train.vo.TrainVO">
+        SELECT <include refid="voColumns"/>
+        <include refid="voJoins"/>
+        WHERE t.id = #{id}
+    </select>
+
+    <!-- 查重只需要实体，不需要站名，所以不 JOIN -->
+    <select id="findByTrainNo" resultType="com.ticket.module.train.entity.Train">
+        SELECT <include refid="baseColumns"/>
+        FROM train t
+        WHERE t.train_no = #{trainNo}
+    </select>
+
+    <!-- ================= 写入 ================= -->
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO train
+            (train_no, train_type, start_station_id, end_station_id,
+             total_mileage, status, remark)
+        VALUES
+            (#{trainNo}, #{trainType}, #{startStationId}, #{endStationId},
+             #{totalMileage}, #{status}, #{remark})
+    </insert>
+
+    <update id="update">
+        UPDATE train
+        SET train_no         = #{trainNo},
+            train_type       = #{trainType},
+            start_station_id = #{startStationId},
+            end_station_id   = #{endStationId},
+            total_mileage    = #{totalMileage},
+            status           = #{status},
+            remark           = #{remark}
+        WHERE id = #{id}
+    </update>
+
+    <!-- ================= 级联删除 ================= -->
+    <!--
+      删车次的顺序：先删"孙子表"，最后删主表。
+
+      虽然我们没建外键（删的顺序不影响报错），但保持这个顺序是习惯：
+      万一以后加了外键，这个顺序依然能跑通。
+    -->
+
+    <delete id="deleteStocksByTrainId">
+        DELETE FROM ticket_stock WHERE train_id = #{trainId}
+    </delete>
+
+    <delete id="deletePricesByTrainId">
+        DELETE FROM train_segment_price WHERE train_id = #{trainId}
+    </delete>
+
+    <delete id="deleteSegmentsByTrainId">
+        DELETE FROM train_segment WHERE train_id = #{trainId}
+    </delete>
+
+    <delete id="deleteStopsByTrainId">
+        DELETE FROM train_stop WHERE train_id = #{trainId}
+    </delete>
+
+    <delete id="deleteById">
+        DELETE FROM train WHERE id = #{id}
+    </delete>
+
+    <!-- 有订单引用就不许删 -->
+    <select id="countOrders" resultType="long">
+        SELECT COUNT(*) FROM ticket_order WHERE train_id = #{trainId}
+    </select>
+
+</mapper>
