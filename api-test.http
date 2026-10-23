@@ -956,3 +956,306 @@ Authorization: Bearer {{adminToken}}
             "期望 12 条（先删后插），实际 " + response.body.data.length + " 条");
     });
 %}
+
+
+### ==========================================================
+### 阶段 4：库存与查票
+### ==========================================================
+
+
+### 61. 重新登录管理员（方便从这里单独开始跑）
+POST http://localhost:8080/api/admin/auth/login
+Content-Type: application/json
+
+{
+  "username": "admin",
+  "password": "123456"
+}
+
+> {%
+    client.test("管理员登录成功", function () {
+        client.assert(response.body.code === 200, "登录失败：" + response.body.msg);
+    });
+    if (response.body.code === 200) {
+        client.global.set("adminToken", response.body.data.token);
+    }
+%}
+
+
+### 62. 为未来 15 天生成分段库存
+### 每趟有 N 段的车，每天生成 N × 3 条库存。
+### 重复执行不会覆盖已经卖出的票。
+POST http://localhost:8080/api/admin/stocks/generate
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+  "startDate": "2026-10-24",
+  "days": 15
+}
+
+> {%
+    client.test("库存生成接口可重复执行", function () {
+        client.assert(response.body.code === 200,
+            "期望 200，实际 " + response.body.code + " / " + response.body.msg);
+        client.assert(response.body.data >= 0,
+            "新增条数不能是负数，实际 " + response.body.data);
+    });
+%}
+
+
+### 63. 查看 G1001 在 2026-10-24 的逐段库存
+GET http://localhost:8080/api/admin/stocks?trainId=1&travelDate=2026-10-24
+Authorization: Bearer {{adminToken}}
+
+> {%
+    client.test("每段每种席别都有库存", function () {
+        client.assert(response.body.code === 200,
+            "期望 200，实际 " + response.body.code + " / " + response.body.msg);
+        client.assert(response.body.data.length === 12,
+            "G1001 是 4 段 × 3 席别，期望 12 条，实际 "
+                + response.body.data.length + " 条");
+        client.assert(response.body.data[0].fromStationName !== null,
+            "fromStationName 是 null，检查库存 SQL 的车站 JOIN");
+    });
+    if (response.body.code === 200 && response.body.data.length > 0) {
+        client.global.set("stockId", response.body.data[0].id);
+        client.global.set("travelDate", response.body.data[0].travelDate);
+    }
+%}
+
+
+### 64. 把第一条库存的余票改成 10
+### 第一条是“第 1 段 + 商务座”，id 由上一条响应自动保存。
+PUT http://localhost:8080/api/admin/stocks/{{stockId}}
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+  "remainingCount": 10
+}
+
+> {%
+    client.test("管理员能手工调整余票", function () {
+        client.assert(response.body.code === 200,
+            "期望 200，实际 " + response.body.code + " / " + response.body.msg);
+    });
+%}
+
+
+### 65. 用户登录（查票接口需要用户 token）
+POST http://localhost:8080/api/user/auth/login
+Content-Type: application/json
+
+{
+  "username": "zhangsan",
+  "password": "123456"
+}
+
+> {%
+    client.test("用户登录成功", function () {
+        client.assert(response.body.code === 200, "登录失败：" + response.body.msg);
+    });
+    if (response.body.code === 200) {
+        client.global.set("userToken", response.body.data.token);
+    }
+%}
+
+
+### 66. 不带 token 查票 —— 拦截器应该直接返回 401
+GET http://localhost:8080/api/user/tickets/search?fromStationId=1&toStationId=27&travelDate={{travelDate}}
+
+> {%
+    client.test("查票接口受登录保护", function () {
+        client.assert(response.status === 401,
+            "期望 HTTP 401，实际 " + response.status);
+    });
+%}
+
+
+### 67. 北京南 → 上海虹桥，查全部席别
+### G1001 从第 1 站坐到第 5 站，覆盖 4 段；
+### 第 1 段商务座刚才调成 10，所以商务座余票应为 10。
+GET http://localhost:8080/api/user/tickets/search?fromStationId=1&toStationId=27&travelDate={{travelDate}}&page=1&size=10
+Authorization: Bearer {{userToken}}
+
+> {%
+    client.test("能查到车次，且余票取区间最小值", function () {
+        client.assert(response.body.code === 200,
+            "期望 200，实际 " + response.body.code + " / " + response.body.msg);
+        client.assert(response.body.data.total >= 1,
+            "期望至少 1 趟车，实际 " + response.body.data.total);
+        var g1001 = response.body.data.records.find(
+            function (ticket) { return ticket.trainNo === "G1001"; });
+        client.assert(g1001 !== undefined, "结果里没有 G1001");
+        client.assert(g1001.seats.length === 3,
+            "G1001 应返回 3 个席别，实际 " + g1001.seats.length);
+        var business = g1001.seats.find(
+            function (seat) { return seat.seatType === 1; });
+        client.assert(business.remainCount === 10,
+            "商务座余票应取 4 段中的最小值 10，实际 " + business.remainCount);
+        client.assert(g1001.durationMinutes === 301,
+            "07:17 到 12:18 应为 301 分钟，实际 " + g1001.durationMinutes);
+    });
+%}
+
+
+### 68. 只查二等座 —— 每个车次应只有一个席别
+GET http://localhost:8080/api/user/tickets/search?fromStationId=1&toStationId=27&travelDate={{travelDate}}&seatType=3
+Authorization: Bearer {{userToken}}
+
+> {%
+    client.test("席别筛选生效", function () {
+        client.assert(response.body.code === 200, "期望 200，实际 " + response.body.code);
+        var records = response.body.data.records;
+        client.assert(records.length >= 1, "期望至少一趟二等座");
+        client.assert(records.every(
+            function (ticket) {
+                return ticket.seats.length === 1 && ticket.seats[0].seatType === 3;
+            }), "传入 seatType=3 后，不应返回其他席别");
+    });
+%}
+
+
+### 69. 反向查询上海虹桥 → 北京南 —— 演示车没有反向停站，应为 0
+GET http://localhost:8080/api/user/tickets/search?fromStationId=27&toStationId=1&travelDate={{travelDate}}
+Authorization: Bearer {{userToken}}
+
+> {%
+    client.test("站点顺序反向时查不到", function () {
+        client.assert(response.body.code === 200, "期望 200，实际 " + response.body.code);
+        client.assert(response.body.data.total === 0,
+            "反向不应匹配，实际 " + response.body.data.total + " 趟");
+    });
+%}
+
+
+### 70. 出发站和到达站相同 —— 应为 0，且不能把整趟车当成有票
+GET http://localhost:8080/api/user/tickets/search?fromStationId=1&toStationId=1&travelDate={{travelDate}}
+Authorization: Bearer {{userToken}}
+
+> {%
+    client.test("出发站等于到达站时不返回车次", function () {
+        client.assert(response.body.code === 200, "期望 200，实际 " + response.body.code);
+        client.assert(response.body.data.total === 0,
+            "同站查询应为 0，实际 " + response.body.data.total);
+    });
+%}
+
+
+### ==========================================================
+### 阶段 5（第一部分）：常用乘车人
+### ==========================================================
+
+
+### 71. 用户登录，并动态生成一个测试证件号
+### 后面用 {{testIdCard}}，重复运行测试也不会撞上上一次的数据。
+POST http://localhost:8080/api/user/auth/login
+Content-Type: application/json
+
+{
+  "username": "zhangsan",
+  "password": "123456"
+}
+
+> {%
+    client.test("用户登录成功", function () {
+        client.assert(response.body.code === 200, "登录失败：" + response.body.msg);
+    });
+    if (response.body.code === 200) {
+        client.global.set("userToken", response.body.data.token);
+        var middle = String(Date.now()).slice(-8);
+        client.global.set("testIdCard", "110101" + middle + "1234");
+    }
+%}
+
+
+### 72. 新增乘车人
+POST http://localhost:8080/api/user/passengers
+Authorization: Bearer {{userToken}}
+Content-Type: application/json
+
+{
+  "name": "测试乘车人",
+  "idCardNo": "{{testIdCard}}",
+  "passengerType": 1,
+  "phone": "13800000000"
+}
+
+> {%
+    client.test("新增乘车人成功", function () {
+        client.assert(response.body.code === 200,
+            "期望 200，实际 " + response.body.code + " / " + response.body.msg);
+        client.global.set("passengerId", response.body.data);
+    });
+%}
+
+
+### 73. 查我的乘车人 —— 证件号必须脱敏
+GET http://localhost:8080/api/user/passengers
+Authorization: Bearer {{userToken}}
+
+> {%
+    client.test("列表包含新增的乘车人，且证件号已脱敏", function () {
+        client.assert(response.body.code === 200, "期望 200，实际 " + response.body.code);
+        var passenger = response.body.data.find(function (item) {
+            return String(item.id) === String(client.global.get("passengerId"));
+        });
+        client.assert(passenger !== undefined, "列表里没有刚新增的乘车人");
+        client.assert(passenger.idCardNo.indexOf("*") >= 0,
+            "证件号没有脱敏：" + passenger.idCardNo);
+        client.assert(passenger.idCardNo !== client.global.get("testIdCard"),
+            "接口不能把完整证件号返回给前端");
+    });
+%}
+
+
+### 74. 修改乘车人
+PUT http://localhost:8080/api/user/passengers/{{passengerId}}
+Authorization: Bearer {{userToken}}
+Content-Type: application/json
+
+{
+  "name": "测试乘车人（已修改）",
+  "idCardNo": "{{testIdCard}}",
+  "passengerType": 2,
+  "phone": ""
+}
+
+> {%
+    client.test("修改乘车人成功", function () {
+        client.assert(response.body.code === 200,
+            "期望 200，实际 " + response.body.code + " / " + response.body.msg);
+    });
+%}
+
+
+### 75. 删除乘车人
+DELETE http://localhost:8080/api/user/passengers/{{passengerId}}
+Authorization: Bearer {{userToken}}
+
+> {%
+    client.test("删除自己的乘车人成功", function () {
+        client.assert(response.body.code === 200,
+            "期望 200，实际 " + response.body.code + " / " + response.body.msg);
+    });
+%}
+
+
+### 76. 证件号格式非法 —— 应返回业务码 400
+POST http://localhost:8080/api/user/passengers
+Authorization: Bearer {{userToken}}
+Content-Type: application/json
+
+{
+  "name": "格式错误",
+  "idCardNo": "12345",
+  "passengerType": 1
+}
+
+> {%
+    client.test("非法证件号被参数校验拦截", function () {
+        client.assert(response.body.code === 400,
+            "期望业务码 400，实际 " + response.body.code);
+    });
+%}

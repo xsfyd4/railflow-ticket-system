@@ -162,4 +162,11 @@
         WHERE id = #{id}
     </update>
 
+    <select id="findAllEnabled" resultType="com.ticket.module.train.entity.Train">
+        SELECT <include refid="baseColumns"/>
+        FROM train t
+        WHERE t.status = 1
+        ORDER BY t.id
+    </select>
+
 </mapper>

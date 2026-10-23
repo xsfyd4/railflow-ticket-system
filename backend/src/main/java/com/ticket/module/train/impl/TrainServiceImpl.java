@@ -116,10 +116,13 @@ public class TrainServiceImpl implements TrainService {
         if (dto.getStartStationId().equals(dto.getEndStationId())){
             throw  new BizException(400,"始发站终点站不可相同");
         }
-        if(trainMapper.findById(id)==null) {
+        // 查一次，后面都用它（顺便拿到原来的 status）
+        TrainVO existing = trainMapper.findById(id);
+        if (existing == null) {
             throw new BizException(ResultCode.TRAIN_NOT_FOUND);
         }
-        if (!trainMapper.findById(id).getTrainNo().equals(dto.getTrainNo())&&trainMapper.findByTrainNo(dto.getTrainNo())!=null){
+        if (!existing.getTrainNo().equals(dto.getTrainNo())
+                && trainMapper.findByTrainNo(dto.getTrainNo()) != null) {
             throw new BizException(ResultCode.TRAIN_NO_EXISTS);
         }
         Train train=new Train();
@@ -129,7 +132,8 @@ public class TrainServiceImpl implements TrainService {
         train.setStartStationId(dto.getStartStationId());
         train.setEndStationId(dto.getEndStationId());
         train.setTotalMileage(dto.getTotalMileage());
-        train.setStatus(dto.getStatus());
+        // status 没传时保持原值，否则会被写成 null（NOT NULL 列，直接报错）
+        train.setStatus(dto.getStatus() == null ? existing.getStatus() : dto.getStatus());
         train.setRemark(dto.getRemark());
         try {
             trainMapper.update(train);

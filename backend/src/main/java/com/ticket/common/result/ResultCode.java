@@ -31,13 +31,22 @@ public enum ResultCode {
     ORDER_STATUS_ERROR(2002, "订单当前状态不允许此操作"),
     ORDER_EXPIRED(2003, "订单已超时，请重新下单"),
     TRAIN_NOT_FOUND(2004, "未找到符合条件的车次"),
+    ORDER_PRICE_CONFIG_ERROR(2005, "该车次暂不可售，请联系管理员"),
+    ORDER_NOT_FOUND(2006, "订单不存在"),
+    ORDER_STOCK_RESTORE_ERROR(2007, "订单库存回补失败，请联系管理员"),
+    ORDER_ITEM_NOT_FOUND(2008, "订单明细不存在或不属于该订单"),
+    ORDER_ITEM_ALREADY_REFUNDED(2009, "该张票已经退票"),
 
     STATION_CODE_EXISTS(3001, "车站三字码已存在"),
     STATION_NOT_FOUND(3002, "车站不存在"),
     STATION_IN_USE(3003, "该车站已被车次使用，请改为禁用"),
 
     TRAIN_NO_EXISTS(3004, "车次号已存在"),
-    TRAIN_IN_USE(3005, "该车次已有订单，不能删除");
+    TRAIN_IN_USE(3005, "该车次已有订单，不能删除"),
+
+    PASSENGER_NOT_FOUND(4001, "乘车人不存在"),
+    PASSENGER_ID_CARD_EXISTS(4002, "该乘车人已存在"),
+    PASSENGER_LIMIT_EXCEEDED(4003, "常用乘车人数量已达上限");
 
     private final int code;
     private final String msg;

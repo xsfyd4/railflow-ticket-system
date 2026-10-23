@@ -82,4 +82,7 @@ public interface TrainMapper {
                        @Param("startStationId") Long startStationId,
                        @Param("endStationId") Long endStationId,
                        @Param("totalMileage") java.math.BigDecimal totalMileage);
+
+    /** 所有启用状态的车次（生成库存时用） */
+    java.util.List<Train> findAllEnabled();
 }

@@ -2,6 +2,7 @@ package com.ticket;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.scheduling.annotation.EnableScheduling;
 
 /**
  * 项目启动类。
@@ -17,6 +18,7 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
  * <p>启动方式：运行本类的 main 方法即可。
  */
 @SpringBootApplication
+@EnableScheduling
 public class TicketApplication {
 
     public static void main(String[] args) {

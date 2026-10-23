@@ -228,10 +228,13 @@ CREATE TABLE `ticket_order` (
   `seat_type`          TINYINT       NOT NULL                COMMENT '席别',
   `passenger_count`    INT           NOT NULL                COMMENT '乘车人数',
   `total_amount`       DECIMAL(10,2) NOT NULL                COMMENT '订单总金额（元）',
-  `status`             TINYINT       NOT NULL DEFAULT 0      COMMENT '0=待支付，1=已支付，2=已取消，3=已出票，4=已退票，5=已完成',
+  `status`             TINYINT       NOT NULL DEFAULT 0      COMMENT '0=待支付，1=已支付，2=已取消，3=部分退票，4=全部退票，5=已完成',
   `expire_time`        DATETIME      NOT NULL                COMMENT '支付截止时间，超时自动取消并回补库存',
   `paid_at`            DATETIME               DEFAULT NULL   COMMENT '支付时间',
-  `cancelled_at`       DATETIME               DEFAULT NULL   COMMENT '取消/退票时间',
+  `refunded_count`     INT           NOT NULL DEFAULT 0      COMMENT '累计已退票数',
+  `refunded_amount`    DECIMAL(10,2) NOT NULL DEFAULT 0      COMMENT '累计退款金额',
+  `last_refunded_at`   DATETIME               DEFAULT NULL   COMMENT '最后一次退票时间',
+  `cancelled_at`       DATETIME               DEFAULT NULL   COMMENT '取消时间',
   `created_at`         DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at`         DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP
                                                  ON UPDATE CURRENT_TIMESTAMP,
@@ -239,7 +242,8 @@ CREATE TABLE `ticket_order` (
   UNIQUE KEY `uk_order_no` (`order_no`),
   KEY `idx_order_user` (`user_id`, `created_at`),
   KEY `idx_order_train` (`travel_date`, `train_id`),
-  KEY `idx_order_status` (`status`, `created_at`)
+  KEY `idx_order_status` (`status`, `created_at`),
+  KEY `idx_order_expire` (`status`, `expire_time`)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '订单主表';
 
 
@@ -255,7 +259,8 @@ CREATE TABLE `ticket_order_item` (
   `price`          DECIMAL(10,2) NOT NULL                COMMENT '这张票的价格',
   `coach_no`       VARCHAR(10)            DEFAULT NULL   COMMENT '车厢号（前期可不选座，留空）',
   `seat_no`        VARCHAR(10)            DEFAULT NULL   COMMENT '座位号（前期可不选座，留空）',
-  `status`         TINYINT       NOT NULL DEFAULT 0      COMMENT '0=待出票，1=已出票，2=已退票',
+  `status`         TINYINT       NOT NULL DEFAULT 0      COMMENT '0=有效待出票，1=已出票，2=已退票',
+  `refunded_at`    DATETIME               DEFAULT NULL   COMMENT '该张票的退票时间',
   `created_at`     DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   KEY `idx_item_order` (`order_id`),
@@ -263,25 +268,7 @@ CREATE TABLE `ticket_order_item` (
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '订单明细表（一票一行）';
 
 
--- 12. 订单占段记录：这张票「压住」了哪几段库存
---     下单时写入，退票时按它精确回补，查问题时能看到这张票到底占用了哪些段。
-DROP TABLE IF EXISTS `order_segment`;
-CREATE TABLE `order_segment` (
-  `id`            BIGINT   NOT NULL AUTO_INCREMENT COMMENT '主键',
-  `order_id`      BIGINT   NOT NULL                COMMENT '订单 ticket_order.id',
-  `order_item_id` BIGINT   NOT NULL                COMMENT '订单明细 ticket_order_item.id',
-  `travel_date`   DATE     NOT NULL                COMMENT '乘车日期',
-  `train_id`      BIGINT   NOT NULL                COMMENT '车次',
-  `segment_index` INT      NOT NULL                COMMENT '被占用的段号',
-  `seat_type`     TINYINT  NOT NULL                COMMENT '席别',
-  `created_at`    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (`id`),
-  UNIQUE KEY `uk_order_segment` (`order_item_id`, `segment_index`),
-  KEY `idx_order_segment_lookup` (`travel_date`, `train_id`, `segment_index`, `seat_type`)
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '订单占用分段记录表';
-
-
--- 13. 管理端操作日志（阶段 6 再接入）
+-- 12. 管理端操作日志（阶段 6 再接入）
 DROP TABLE IF EXISTS `admin_operation_log`;
 CREATE TABLE `admin_operation_log` (
   `id`         BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键',

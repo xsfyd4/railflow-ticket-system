@@ -59,6 +59,7 @@
 
 - [01 · 项目结构设计](docs/01-项目结构设计.md)
 - [02 · 数据库设计](docs/02-数据库设计.md)
+- [08 · 项目开发日志](docs/08-项目开发日志.md)
 - 建表 SQL：[sql/01-schema.sql](sql/01-schema.sql)
 - 演示数据：[sql/02-init-data.sql](sql/02-init-data.sql)
 

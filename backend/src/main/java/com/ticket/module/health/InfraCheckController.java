@@ -1,8 +1,8 @@
 package com.ticket.module.health;
 
 import com.ticket.common.result.R;
+import org.springframework.amqp.core.AmqpAdmin;
 import org.springframework.amqp.core.Queue;
-import org.springframework.amqp.rabbit.core.RabbitAdmin;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -31,14 +31,21 @@ public class InfraCheckController {
 
     private final StringRedisTemplate redisTemplate;
     private final RabbitTemplate rabbitTemplate;
-    private final RabbitAdmin rabbitAdmin;
+    /**
+     * 注意这里注入的是接口 AmqpAdmin，不是 RabbitAdmin。
+     *
+     * <p>Spring Boot 自动配置注册的 Bean 声明的类型就是 AmqpAdmin
+     * （实际对象是 RabbitAdmin）。按 RabbitAdmin 注入会报
+     * "No qualifying bean of type RabbitAdmin available"。
+     */
+    private final AmqpAdmin amqpAdmin;
 
     public InfraCheckController(StringRedisTemplate redisTemplate,
                                 RabbitTemplate rabbitTemplate,
-                                RabbitAdmin rabbitAdmin) {
+                                AmqpAdmin amqpAdmin) {
         this.redisTemplate = redisTemplate;
         this.rabbitTemplate = rabbitTemplate;
-        this.rabbitAdmin = rabbitAdmin;
+        this.amqpAdmin = amqpAdmin;
     }
 
     /** GET http://localhost:8080/api/public/infra-check */
@@ -66,7 +73,7 @@ public class InfraCheckController {
     /** 声明队列并投递一条消息，确认连接和发送都正常 */
     private String checkRabbit() {
         try {
-            rabbitAdmin.declareQueue(new Queue(HEALTH_QUEUE, true));
+            amqpAdmin.declareQueue(new Queue(HEALTH_QUEUE, true));
             String message = "ping-" + System.currentTimeMillis();
             rabbitTemplate.convertAndSend(HEALTH_QUEUE, message);
 
