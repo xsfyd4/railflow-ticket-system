@@ -1,0 +1,284 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.ticket.module.order.mapper.OrderMapper">
+
+    <!--
+      同时关联出发站和到达站。
+      stop_order 的方向检查放在 SQL 里，反向购票不会产生结果。
+    -->
+    <select id="findRoute"
+            resultType="com.ticket.module.order.vo.OrderRouteVO">
+        SELECT t.id                    AS train_id,
+               t.train_no,
+               stop_from.stop_order     AS from_stop_order,
+               stop_to.stop_order       AS to_stop_order
+        FROM train t
+        INNER JOIN train_stop stop_from
+                ON stop_from.train_id = t.id
+               AND stop_from.station_id = #{fromStationId}
+        INNER JOIN train_stop stop_to
+                ON stop_to.train_id = t.id
+               AND stop_to.station_id = #{toStationId}
+        WHERE t.id = #{trainId}
+          AND t.status = 1
+          AND stop_from.stop_order &lt; stop_to.stop_order
+    </select>
+
+    <!-- 价格只按车次、席别和段号查询，不接受前端传金额。 -->
+    <select id="findPrices"
+            resultType="com.ticket.module.train.vo.TrainPriceVO">
+        SELECT segment_index, seat_type, price
+        FROM train_segment_price
+        WHERE train_id = #{trainId}
+          AND seat_type = #{seatType}
+          AND segment_index BETWEEN #{fromSegmentIndex}
+                                AND #{toSegmentIndex}
+        ORDER BY segment_index
+    </select>
+
+    <!--
+      防超卖核心 SQL。
+      remaining_count >= count 的判断和减法由数据库原子执行。
+      任何一段余票不足，这段就不会更新，返回行数小于覆盖段数。
+    -->
+    <update id="deductStock">
+        UPDATE ticket_stock
+        SET sold_count      = sold_count + #{count},
+            remaining_count = remaining_count - #{count},
+            version         = version + 1
+        WHERE travel_date = #{travelDate}
+          AND train_id = #{trainId}
+          AND seat_type = #{seatType}
+          AND segment_index BETWEEN #{fromSegmentIndex}
+                                AND #{toSegmentIndex}
+          AND remaining_count &gt;= #{count}
+    </update>
+
+    <insert id="insertOrder" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO ticket_order
+            (order_no, user_id, train_id, train_no, travel_date,
+             from_station_id, to_station_id,
+             from_segment_index, to_segment_index,
+             seat_type, passenger_count, total_amount,
+             status, expire_time)
+        VALUES
+            (#{orderNo}, #{userId}, #{trainId}, #{trainNo}, #{travelDate},
+             #{fromStationId}, #{toStationId},
+             #{fromSegmentIndex}, #{toSegmentIndex},
+             #{seatType}, #{passengerCount}, #{totalAmount},
+             #{status}, #{expireTime})
+    </insert>
+
+    <insert id="insertItem" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO ticket_order_item
+            (order_id, passenger_id, passenger_name, id_card_no,
+             seat_type, price, coach_no, seat_no, status)
+        VALUES
+            (#{orderId}, #{passengerId}, #{passengerName}, #{idCardNo},
+             #{seatType}, #{price}, #{coachNo}, #{seatNo}, #{status})
+    </insert>
+
+    <sql id="orderVoColumns">
+        o.id,
+        o.order_no,
+        o.train_no,
+        o.travel_date,
+        station_from.station_name AS from_station_name,
+        station_to.station_name   AS to_station_name,
+        o.seat_type,
+        o.passenger_count,
+        o.total_amount,
+        o.status,
+        o.expire_time,
+        o.refunded_count,
+        o.refunded_amount,
+        o.last_refunded_at,
+        o.created_at
+    </sql>
+
+    <select id="countByUser" resultType="long">
+        SELECT COUNT(*)
+        FROM ticket_order o
+        WHERE o.user_id = #{userId}
+        <if test="status != null">
+          AND o.status = #{status}
+        </if>
+    </select>
+
+    <select id="findPageByUser" resultType="com.ticket.module.order.vo.OrderVO">
+        SELECT <include refid="orderVoColumns"/>
+        FROM ticket_order o
+        LEFT JOIN station station_from
+               ON station_from.id = o.from_station_id
+        LEFT JOIN station station_to
+               ON station_to.id = o.to_station_id
+        WHERE o.user_id = #{userId}
+        <if test="status != null">
+          AND o.status = #{status}
+        </if>
+        ORDER BY o.created_at DESC, o.id DESC
+        LIMIT #{size} OFFSET #{offset}
+    </select>
+
+    <select id="findDetailByUserAndNo"
+            resultType="com.ticket.module.order.vo.OrderDetailVO">
+        SELECT <include refid="orderVoColumns"/>
+        FROM ticket_order o
+        LEFT JOIN station station_from
+               ON station_from.id = o.from_station_id
+        LEFT JOIN station station_to
+               ON station_to.id = o.to_station_id
+        WHERE o.user_id = #{userId}
+          AND o.order_no = #{orderNo}
+    </select>
+
+    <!-- 订单归属已经在上一条查询确认，这里只按订单主键取明细。 -->
+    <select id="findItemsByOrderId"
+            resultType="com.ticket.module.order.vo.OrderItemVO">
+        SELECT id,
+               passenger_name,
+               id_card_no,
+               seat_type,
+               price,
+               coach_no,
+               seat_no,
+               status,
+               refunded_at
+        FROM ticket_order_item
+        WHERE order_id = #{orderId}
+        ORDER BY id
+    </select>
+
+    <!--
+      FOR UPDATE 是支付/取消的互斥锁点。
+      相同订单的另一个请求会等待，随后读到已经变化的状态。
+    -->
+    <select id="findByOrderNoAndUserForUpdate"
+            resultType="com.ticket.module.order.entity.TicketOrder">
+        SELECT id, order_no, user_id, train_id, train_no, travel_date,
+               from_station_id, to_station_id,
+               from_segment_index, to_segment_index,
+               seat_type, passenger_count, total_amount,
+               status, expire_time, paid_at, cancelled_at,
+               refunded_count, refunded_amount, last_refunded_at,
+               created_at, updated_at
+        FROM ticket_order
+        WHERE order_no = #{orderNo}
+          AND user_id = #{userId}
+        FOR UPDATE
+    </select>
+
+    <update id="markPaid">
+        UPDATE ticket_order
+        SET status = 1,
+            paid_at = #{paidAt}
+        WHERE id = #{id}
+          AND status = 0
+    </update>
+
+    <update id="markCancelled">
+        UPDATE ticket_order
+        SET status = 2,
+            cancelled_at = #{cancelledAt}
+        WHERE id = #{id}
+          AND status = 0
+    </update>
+
+    <!--
+      取消订单时按订单保存的区间统一回补。
+      上限条件防止重复操作或脏数据把 remaining_count 刷到总票数以上。
+    -->
+    <update id="restoreStock">
+        UPDATE ticket_stock
+        SET sold_count      = sold_count - #{count},
+            remaining_count = remaining_count + #{count},
+            version         = version + 1
+        WHERE travel_date = #{travelDate}
+          AND train_id = #{trainId}
+          AND seat_type = #{seatType}
+          AND segment_index BETWEEN #{fromSegmentIndex}
+                                AND #{toSegmentIndex}
+          AND sold_count &gt;= #{count}
+          AND remaining_count + #{count} &lt;= total_count
+    </update>
+
+    <select id="findExpiredPendingOrderIds" resultType="long">
+        SELECT id
+        FROM ticket_order
+        WHERE status = 0
+          AND expire_time &lt;= NOW()
+        ORDER BY expire_time, id
+        LIMIT #{limit}
+    </select>
+
+    <select id="findByIdForUpdate"
+            resultType="com.ticket.module.order.entity.TicketOrder">
+        SELECT id, order_no, user_id, train_id, train_no, travel_date,
+               from_station_id, to_station_id,
+               from_segment_index, to_segment_index,
+               seat_type, passenger_count, total_amount,
+               status, expire_time, paid_at, cancelled_at,
+               refunded_count, refunded_amount, last_refunded_at,
+               created_at, updated_at
+        FROM ticket_order
+        WHERE id = #{id}
+        FOR UPDATE
+    </select>
+
+    <!-- 先锁订单再锁明细。ORDER BY id 让同一批明细的加锁顺序稳定。 -->
+    <select id="findItemsByIdsForUpdate"
+            resultType="com.ticket.module.order.entity.TicketOrderItem">
+        SELECT id, order_id, passenger_id, passenger_name, id_card_no,
+               seat_type, price, coach_no, seat_no, status,
+               refunded_at, created_at
+        FROM ticket_order_item
+        WHERE order_id = #{orderId}
+          AND id IN
+          <foreach collection="itemIds" item="itemId"
+                   open="(" separator="," close=")">
+              #{itemId}
+          </foreach>
+        ORDER BY id
+        FOR UPDATE
+    </select>
+
+    <update id="markItemsRefunded">
+        UPDATE ticket_order_item
+        SET status = 2,
+            refunded_at = #{refundedAt}
+        WHERE order_id = #{orderId}
+          AND id IN
+          <foreach collection="itemIds" item="itemId"
+                   open="(" separator="," close=")">
+              #{itemId}
+          </foreach>
+          AND status IN (0, 1)
+    </update>
+
+    <select id="countUnrefundedItems" resultType="long">
+        SELECT COUNT(*)
+        FROM ticket_order_item
+        WHERE order_id = #{orderId}
+          AND status IN (0, 1)
+    </select>
+
+    <select id="countRefundedItems" resultType="long">
+        SELECT COUNT(*)
+        FROM ticket_order_item
+        WHERE order_id = #{orderId}
+          AND status = 2
+    </select>
+
+    <update id="updateRefundSummary">
+        UPDATE ticket_order
+        SET refunded_count = #{refundedCount},
+            refunded_amount = refunded_amount + #{refundAmount},
+            last_refunded_at = #{refundedAt},
+            status = #{status}
+        WHERE id = #{orderId}
+          AND status IN (1, 3)
+    </update>
+
+</mapper>

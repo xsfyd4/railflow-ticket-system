@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.ticket.module.passenger.mapper.PassengerMapper">
+
+    <sql id="columns">
+        id, user_id, name, id_card_no, passenger_type, phone,
+        created_at, updated_at
+    </sql>
+
+    <select id="findByUserId" resultType="com.ticket.module.passenger.entity.Passenger">
+        SELECT <include refid="columns"/>
+        FROM passenger
+        WHERE user_id = #{userId}
+        ORDER BY created_at DESC, id DESC
+    </select>
+
+    <select id="findByIdAndUserId"
+            resultType="com.ticket.module.passenger.entity.Passenger">
+        SELECT <include refid="columns"/>
+        FROM passenger
+        WHERE id = #{id}
+          AND user_id = #{userId}
+    </select>
+
+    <select id="findByUserIdAndIdCardNo"
+            resultType="com.ticket.module.passenger.entity.Passenger">
+        SELECT <include refid="columns"/>
+        FROM passenger
+        WHERE user_id = #{userId}
+          AND id_card_no = #{idCardNo}
+    </select>
+
+    <select id="countByUserId" resultType="long">
+        SELECT COUNT(*)
+        FROM passenger
+        WHERE user_id = #{userId}
+    </select>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO passenger
+            (user_id, name, id_card_no, passenger_type, phone)
+        VALUES
+            (#{userId}, #{name}, #{idCardNo}, #{passengerType}, #{phone})
+    </insert>
+
+    <update id="update">
+        UPDATE passenger
+        SET name           = #{name},
+            id_card_no     = #{idCardNo},
+            passenger_type = #{passengerType},
+            phone          = #{phone}
+        WHERE id = #{id}
+          AND user_id = #{userId}
+    </update>
+
+    <delete id="deleteByIdAndUserId">
+        DELETE FROM passenger
+        WHERE id = #{id}
+          AND user_id = #{userId}
+    </delete>
+
+</mapper>

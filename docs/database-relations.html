@@ -1,0 +1,718 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>火车票系统数据库表关系</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --background: #f2f1ec;
+      --foreground: #20211f;
+      --card: #fbfaf6;
+      --card-foreground: #20211f;
+      --muted: #e8e6df;
+      --muted-foreground: #686a64;
+      --border: #d3d0c6;
+      --line: #92958d;
+      --user: #2f6f73;
+      --travel: #376e9d;
+      --stock: #b06a2a;
+      --order: #80558f;
+      --admin: #5f6b57;
+      --danger: #a1453e;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --background: #161815;
+        --foreground: #edede7;
+        --card: #20231f;
+        --card-foreground: #edede7;
+        --muted: #292d28;
+        --muted-foreground: #b2b6ad;
+        --border: #3b4039;
+        --line: #737a70;
+        --user: #6bb8ba;
+        --travel: #76a8d5;
+        --stock: #e2a266;
+        --order: #c39bd1;
+        --admin: #a4b29a;
+        --danger: #e58a82;
+      }
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--background);
+      color: var(--foreground);
+      font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+      font-size: 14px;
+      font-weight: 400;
+      line-height: 1.55;
+    }
+
+    .page {
+      width: min(1180px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 32px 0 48px;
+    }
+
+    .eyebrow {
+      color: var(--muted-foreground);
+      font-size: 12px;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      margin: 6px 0 8px;
+      font-size: clamp(24px, 4vw, 40px);
+      font-weight: 500;
+      letter-spacing: -.03em;
+    }
+
+    h2 {
+      margin: 0 0 14px;
+      font-size: 18px;
+      font-weight: 500;
+    }
+
+    p {
+      margin: 0;
+    }
+
+    .subtitle {
+      max-width: 760px;
+      color: var(--muted-foreground);
+    }
+
+    .meta-row,
+    .legend,
+    .status-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px 14px;
+    }
+
+    .meta-row {
+      margin-top: 18px;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      min-height: 30px;
+      padding: 4px 10px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      color: var(--muted-foreground);
+      background: color-mix(in srgb, var(--card) 65%, transparent);
+      font-size: 12px;
+    }
+
+    .dot {
+      width: 8px;
+      height: 8px;
+      flex: 0 0 8px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+
+    .section {
+      margin-top: 30px;
+    }
+
+    .section-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: end;
+      gap: 16px;
+      margin-bottom: 13px;
+    }
+
+    .section-note,
+    .hint {
+      color: var(--muted-foreground);
+      font-size: 12px;
+    }
+
+    .flow {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1.15fr) auto minmax(0, 1fr);
+      align-items: stretch;
+      gap: 8px;
+      padding: 18px;
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      background: color-mix(in srgb, var(--card) 72%, transparent);
+    }
+
+    .flow-node {
+      display: flex;
+      min-height: 100px;
+      flex-direction: column;
+      justify-content: center;
+      gap: 5px;
+      padding: 14px;
+      border-radius: 12px;
+      background: var(--muted);
+    }
+
+    .flow-node strong {
+      font-size: 14px;
+      font-weight: 500;
+    }
+
+    .flow-node span {
+      color: var(--muted-foreground);
+      font-size: 12px;
+    }
+
+    .arrow {
+      display: flex;
+      align-items: center;
+      color: var(--line);
+      font-size: 20px;
+      text-align: center;
+    }
+
+    .flow-caption {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin-top: 10px;
+    }
+
+    .flow-caption div {
+      padding: 12px 14px;
+      border-left: 3px solid var(--travel);
+      background: color-mix(in srgb, var(--card) 56%, transparent);
+      color: var(--muted-foreground);
+      font-size: 12px;
+    }
+
+    .flow-caption div:last-child {
+      border-left-color: var(--order);
+    }
+
+    .board {
+      display: grid;
+      grid-template-columns: repeat(12, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .cluster {
+      padding: 16px;
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      background: color-mix(in srgb, var(--card) 58%, transparent);
+    }
+
+    .cluster h3 {
+      margin: 0 0 3px;
+      font-size: 14px;
+      font-weight: 500;
+    }
+
+    .cluster > p {
+      margin-bottom: 12px;
+      color: var(--muted-foreground);
+      font-size: 12px;
+    }
+
+    .cluster-accounts {
+      grid-column: span 3;
+    }
+
+    .cluster-travel {
+      grid-column: span 5;
+    }
+
+    .cluster-orders {
+      grid-column: span 4;
+    }
+
+    .cluster-stock {
+      grid-column: span 12;
+    }
+
+    .card-stack {
+      display: grid;
+      gap: 9px;
+    }
+
+    .travel-grid,
+    .order-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 9px;
+    }
+
+    .table-card {
+      width: 100%;
+      min-height: 132px;
+      padding: 12px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: var(--card);
+      color: var(--card-foreground);
+      font: inherit;
+      text-align: left;
+      cursor: pointer;
+      transition: border-color .16s ease, background .16s ease, opacity .16s ease, transform .16s ease;
+    }
+
+    .table-card:hover {
+      transform: translateY(-2px);
+      border-color: var(--line);
+    }
+
+    .table-card[aria-pressed="true"] {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 30%, transparent);
+    }
+
+    .diagram.is-filtered .table-card {
+      opacity: .26;
+    }
+
+    .diagram.is-filtered .table-card.is-related,
+    .diagram.is-filtered .table-card[aria-pressed="true"] {
+      opacity: 1;
+    }
+
+    .card-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+
+    .table-name {
+      font-family: Consolas, "SFMono-Regular", monospace;
+      font-size: 13px;
+      font-weight: 500;
+    }
+
+    .tag {
+      padding: 2px 7px;
+      border-radius: 999px;
+      color: var(--tag-color);
+      background: color-mix(in srgb, var(--tag-color) 13%, transparent);
+      font-size: 11px;
+      white-space: nowrap;
+    }
+
+    .table-card[data-color="user"] {
+      --accent: var(--user);
+      --tag-color: var(--user);
+    }
+
+    .table-card[data-color="travel"] {
+      --accent: var(--travel);
+      --tag-color: var(--travel);
+    }
+
+    .table-card[data-color="stock"] {
+      --accent: var(--stock);
+      --tag-color: var(--stock);
+    }
+
+    .table-card[data-color="order"] {
+      --accent: var(--order);
+      --tag-color: var(--order);
+    }
+
+    .table-card[data-color="admin"] {
+      --accent: var(--admin);
+      --tag-color: var(--admin);
+    }
+
+    .desc {
+      display: block;
+      min-height: 36px;
+      color: var(--muted-foreground);
+      font-size: 12px;
+    }
+
+    .keys {
+      display: block;
+      margin-top: 9px;
+      font-family: Consolas, "SFMono-Regular", monospace;
+      color: var(--foreground);
+      font-size: 11px;
+    }
+
+    .relation {
+      display: block;
+      margin-top: 7px;
+      color: var(--tag-color);
+      font-size: 11px;
+    }
+
+    .card-wide {
+      grid-column: span 2;
+    }
+
+    .stock-layout {
+      display: grid;
+      grid-template-columns: 1.05fr 1fr 1fr;
+      gap: 10px;
+    }
+
+    .rule-card {
+      min-height: 132px;
+      padding: 13px;
+      border-left: 3px solid var(--stock);
+      background: color-mix(in srgb, var(--muted) 72%, transparent);
+    }
+
+    .rule-card h4 {
+      margin: 0 0 7px;
+      font-size: 13px;
+      font-weight: 500;
+    }
+
+    .rule-card p {
+      color: var(--muted-foreground);
+      font-size: 12px;
+    }
+
+    .rule-card code,
+    .keys {
+      word-break: break-word;
+    }
+
+    .status-row {
+      min-height: 34px;
+      margin-top: 14px;
+      color: var(--muted-foreground);
+      font-size: 12px;
+    }
+
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+
+    @media (max-width: 900px) {
+      .cluster-accounts,
+      .cluster-travel,
+      .cluster-orders {
+        grid-column: span 12;
+      }
+
+      .flow {
+        grid-template-columns: 1fr;
+      }
+
+      .arrow {
+        justify-content: center;
+        transform: rotate(90deg);
+      }
+
+      .flow-caption,
+      .stock-layout {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 600px) {
+      .page {
+        width: min(100% - 20px, 1180px);
+        padding-top: 22px;
+      }
+
+      .section-head {
+        align-items: start;
+        flex-direction: column;
+      }
+
+      .travel-grid,
+      .order-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .card-wide {
+        grid-column: auto;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <header>
+      <div class="eyebrow">Train Ticket · Data Model</div>
+      <h1>数据库表关系图</h1>
+      <p class="subtitle">
+        12 张表围绕“静态车次定义 → 每日分段库存 → 用户订单”组织。
+        项目不使用物理外键，箭头表示应用层维护的逻辑关系。
+      </p>
+      <div class="meta-row" aria-label="数据模型摘要">
+        <span class="pill"><span class="dot" style="color:var(--travel)"></span>12 张表</span>
+        <span class="pill"><span class="dot" style="color:var(--stock)"></span>N 站 = N-1 段</span>
+        <span class="pill"><span class="dot" style="color:var(--order)"></span>子表关系使用逻辑外键</span>
+      </div>
+    </header>
+
+    <section class="section" aria-labelledby="core-flow-title">
+      <div class="section-head">
+        <div>
+          <h2 id="core-flow-title">核心查询链路</h2>
+          <p class="section-note">用户查票只需要车站、车次和日期，不按车次号反查。</p>
+        </div>
+        <span class="hint">从两座车站定位同一条车次路径</span>
+      </div>
+
+      <div class="flow" aria-label="查票核心数据流">
+        <div class="flow-node">
+          <strong>两座 station</strong>
+          <span>出发站 id + 到达站 id</span>
+        </div>
+        <div class="arrow" aria-hidden="true">→</div>
+        <div class="flow-node">
+          <strong>两条 train_stop</strong>
+          <span>确认 stop_order 方向</span>
+        </div>
+        <div class="arrow" aria-hidden="true">→</div>
+        <div class="flow-node">
+          <strong>train_segment 区间</strong>
+          <span>from_order ～ to_order − 1</span>
+        </div>
+        <div class="arrow" aria-hidden="true">→</div>
+        <div class="flow-node">
+          <strong>余票 + 票价</strong>
+          <span>ticket_stock 取 MIN；price 求和</span>
+        </div>
+      </div>
+
+      <div class="flow-caption">
+        <div><strong>下单：</strong>按订单的起止段区间执行条件 UPDATE，一次扣减所有覆盖段。</div>
+        <div><strong>退票：</strong>读取订单保存的起止段区间，一次回补所有覆盖段。</div>
+      </div>
+    </section>
+
+    <section class="section diagram" id="diagram" aria-labelledby="table-map-title">
+      <div class="section-head">
+        <div>
+          <h2 id="table-map-title">表关系总览</h2>
+          <p class="section-note">点击任意表，突出显示与它直接关联的其他表。</p>
+        </div>
+        <div class="legend" aria-label="颜色图例">
+          <span class="pill"><span class="dot" style="color:var(--user)"></span>账号</span>
+          <span class="pill"><span class="dot" style="color:var(--travel)"></span>车次</span>
+          <span class="pill"><span class="dot" style="color:var(--order)"></span>订单</span>
+          <span class="pill"><span class="dot" style="color:var(--stock)"></span>库存</span>
+          <span class="pill"><span class="dot" style="color:var(--admin)"></span>管理</span>
+        </div>
+      </div>
+
+      <div class="board">
+        <section class="cluster cluster-accounts" aria-labelledby="accounts-title">
+          <h3 id="accounts-title">账号与审计</h3>
+          <p>用户端和管理端账号彼此独立。</p>
+          <div class="card-stack">
+            <button type="button" class="table-card flow-target"
+                    data-table="sys_user" data-color="user" aria-pressed="false"
+                    data-related="passenger ticket_order">
+              <span class="card-top"><code class="table-name">sys_user</code><span class="tag">用户账号</span></span>
+              <span class="desc">乘客登录、身份和账号状态。</span>
+              <span class="keys">PK id · UK username · UK phone</span>
+              <span class="relation">1 : N passenger.user_id</span>
+            </button>
+
+            <button type="button" class="table-card flow-target"
+                    data-table="sys_admin" data-color="admin" aria-pressed="false"
+                    data-related="admin_operation_log">
+              <span class="card-top"><code class="table-name">sys_admin</code><span class="tag">管理员</span></span>
+              <span class="desc">管理端登录账号，与用户账号分表。</span>
+              <span class="keys">PK id · UK username · status</span>
+              <span class="relation">1 : N admin_operation_log.admin_id</span>
+            </button>
+
+            <button type="button" class="table-card flow-target"
+                    data-table="admin_operation_log" data-color="admin" aria-pressed="false"
+                    data-related="sys_admin">
+              <span class="card-top"><code class="table-name">admin_operation_log</code><span class="tag">审计</span></span>
+              <span class="desc">记录管理员执行的动作和目标对象。</span>
+              <span class="keys">PK id · admin_id · module · action</span>
+              <span class="relation">N : 1 sys_admin.id</span>
+            </button>
+          </div>
+        </section>
+
+        <section class="cluster cluster-travel" aria-labelledby="travel-title">
+          <h3 id="travel-title">静态车次定义</h3>
+          <p>一天中的停站顺序决定分段；同一车次每天复用这套定义。</p>
+          <div class="travel-grid">
+            <button type="button" class="table-card flow-target"
+                    data-table="station" data-color="travel" aria-pressed="false"
+                    data-related="train train_stop ticket_stock ticket_order">
+              <span class="card-top"><code class="table-name">station</code><span class="tag">车站</span></span>
+              <span class="desc">北京南、上海虹桥等车站基础信息。</span>
+              <span class="keys">PK id · UK station_code · city / pinyin</span>
+              <span class="relation">1 : N train_stop.station_id</span>
+            </button>
+
+            <button type="button" class="table-card flow-target"
+                    data-table="train" data-color="travel" aria-pressed="false"
+                    data-related="station train_stop train_segment train_segment_price ticket_stock ticket_order">
+              <span class="card-top"><code class="table-name">train</code><span class="tag">车次</span></span>
+              <span class="desc">G1001 等车次的静态信息，不包含日历库存。</span>
+              <span class="keys">PK id · UK train_no · start/end_station_id</span>
+              <span class="relation">1 : N stops / segments / stock / orders</span>
+            </button>
+
+            <button type="button" class="table-card flow-target"
+                    data-table="train_stop" data-color="travel" aria-pressed="false"
+                    data-related="station train train_segment">
+              <span class="card-top"><code class="table-name">train_stop</code><span class="tag">停站</span></span>
+              <span class="desc">一趟车按 stop_order 排列的经停站和到发时刻。</span>
+              <span class="keys">PK id · UK(train_id, stop_order) · station_id</span>
+              <span class="relation">N : 1 train · N : 1 station</span>
+            </button>
+
+            <button type="button" class="table-card flow-target"
+                    data-table="train_segment" data-color="travel" aria-pressed="false"
+                    data-related="train train_stop train_segment_price ticket_stock">
+              <span class="card-top"><code class="table-name">train_segment</code><span class="tag">分段</span></span>
+              <span class="desc">相邻两站组成一段；k 段 = k 站 → k+1 站。</span>
+              <span class="keys">PK id · UK(train_id, segment_index)</span>
+              <span class="relation">N : 1 train · logical → price / stock</span>
+            </button>
+
+            <button type="button" class="table-card card-wide flow-target"
+                    data-table="train_segment_price" data-color="travel" aria-pressed="false"
+                    data-related="train train_segment ticket_stock">
+              <span class="card-top"><code class="table-name">train_segment_price</code><span class="tag">分段价格</span></span>
+              <span class="desc">每段、每席别的票价；订单总价由覆盖段价格求和。</span>
+              <span class="keys">UK(train_id, segment_index, seat_type) · price</span>
+              <span class="relation">N : 1 logical train_segment</span>
+            </button>
+          </div>
+        </section>
+
+        <section class="cluster cluster-orders" aria-labelledby="orders-title">
+          <h3 id="orders-title">用户与订单</h3>
+          <p>订单保存统一行程区间，明细保存每位乘客的票和身份快照。</p>
+          <div class="order-grid">
+            <button type="button" class="table-card flow-target"
+                    data-table="passenger" data-color="user" aria-pressed="false"
+                    data-related="sys_user ticket_order_item">
+              <span class="card-top"><code class="table-name">passenger</code><span class="tag">乘车人</span></span>
+              <span class="desc">一个账号维护多位常用乘车人。</span>
+              <span class="keys">PK id · user_id · UK(user_id, id_card_no)</span>
+              <span class="relation">N : 1 sys_user · 1 : N item</span>
+            </button>
+
+            <button type="button" class="table-card flow-target"
+                    data-table="ticket_order" data-color="order" aria-pressed="false"
+                    data-related="sys_user passenger train station ticket_order_item ticket_stock">
+              <span class="card-top"><code class="table-name">ticket_order</code><span class="tag">订单主表</span></span>
+              <span class="desc">一次购买、一个统一区间、一个席别。</span>
+              <span class="keys">PK id · UK order_no · from/to_segment_index</span>
+              <span class="relation">N : 1 user / train · 1 : N item</span>
+            </button>
+
+            <button type="button" class="table-card card-wide flow-target"
+                    data-table="ticket_order_item" data-color="order" aria-pressed="false"
+                    data-related="ticket_order passenger">
+              <span class="card-top"><code class="table-name">ticket_order_item</code><span class="tag">订单明细</span></span>
+              <span class="desc">一位乘车人一张票；姓名与证件号保存为下单时快照。</span>
+              <span class="keys">PK id · order_id · passenger_id · seat / price</span>
+              <span class="relation">N : 1 ticket_order · logical → passenger</span>
+            </button>
+          </div>
+        </section>
+
+        <section class="cluster cluster-stock" aria-labelledby="stock-title">
+          <h3 id="stock-title">动态分段库存</h3>
+          <p>库存是唯一按月历变化的业务表；车次和分段定义保持静态。</p>
+          <div class="stock-layout">
+            <button type="button" class="table-card flow-target"
+                    data-table="ticket_stock" data-color="stock" aria-pressed="false"
+                    data-related="train train_segment train_segment_price station ticket_order">
+              <span class="card-top"><code class="table-name">ticket_stock</code><span class="tag">核心库存</span></span>
+              <span class="desc">日期 + 车次 + 段号 + 席别唯一确定一条余票记录。</span>
+              <span class="keys">UK(travel_date, train_id, segment_index, seat_type)</span>
+              <span class="relation">logical → train_segment / price / order</span>
+            </button>
+
+            <div class="rule-card">
+              <h4>查票</h4>
+              <p>区间所有段的 <code>remaining_count</code> 取最小值；所有段价格求和。</p>
+            </div>
+
+            <div class="rule-card">
+              <h4>防超卖</h4>
+              <p>下单执行 <code>UPDATE ... WHERE remaining_count &gt;= count</code>，检查受影响段数。</p>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <div class="status-row" aria-live="polite">
+        <span id="selection-status">未选择表。所有关系均由应用层代码维护，没有数据库物理外键。</span>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    (() => {
+      const diagram = document.getElementById("diagram");
+      const cards = Array.from(diagram.querySelectorAll(".table-card"));
+      const status = document.getElementById("selection-status");
+      let selected = null;
+
+      function clearSelection() {
+        selected = null;
+        diagram.classList.remove("is-filtered");
+        cards.forEach((card) => {
+          card.classList.remove("is-related");
+          card.setAttribute("aria-pressed", "false");
+        });
+        status.textContent =
+          "未选择表。所有关系均由应用层代码维护，没有数据库物理外键。";
+      }
+
+      cards.forEach((card) => {
+        card.addEventListener("click", () => {
+          const table = card.dataset.table;
+          if (selected === table) {
+            clearSelection();
+            return;
+          }
+
+          selected = table;
+          const related = new Set(card.dataset.related.split(/\s+/));
+          diagram.classList.add("is-filtered");
+          cards.forEach((item) => {
+            const isSelected = item.dataset.table === table;
+            const isRelated = related.has(item.dataset.table);
+            item.classList.toggle("is-related", isRelated);
+            item.setAttribute("aria-pressed", String(isSelected));
+          });
+
+          const names = Array.from(related).join("、");
+          status.textContent = `${table} 的直接关联表：${names}。再次点击可清除。`;
+        });
+      });
+    })();
+  </script>
+</body>
+</html>

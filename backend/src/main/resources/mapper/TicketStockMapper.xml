@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.ticket.module.stock.mapper.TicketStockMapper">
+
+    <!--
+      批量插入库存，重复的跳过。
+
+      ON DUPLICATE KEY UPDATE id = id 是"什么都不做"的惯用写法：
+      靠唯一键 (travel_date, train_id, segment_index, seat_type) 挡掉重复，
+      重复生成时不会报错，也不会覆盖已经卖出去的库存。
+    -->
+    <insert id="batchInsertIgnore">
+        INSERT INTO ticket_stock
+            (travel_date, train_id, segment_index, seat_type,
+             from_station_id, to_station_id, total_count, sold_count, remaining_count)
+        VALUES
+        <foreach collection="list" item="s" separator=",">
+            (#{s.travelDate}, #{s.trainId}, #{s.segmentIndex}, #{s.seatType},
+             #{s.fromStationId}, #{s.toStationId},
+             #{s.totalCount}, #{s.soldCount}, #{s.remainingCount})
+        </foreach>
+        ON DUPLICATE KEY UPDATE id = id
+    </insert>
+
+    <select id="countByDateRange" resultType="long">
+        SELECT COUNT(*)
+        FROM ticket_stock
+        WHERE travel_date &gt;= #{startDate}
+          AND travel_date &lt; #{endDateExclusive}
+    </select>
+
+    <sql id="voColumns">
+        s.id, s.travel_date, s.train_id, s.segment_index, s.seat_type,
+        s.from_station_id, a.station_name AS from_station_name,
+        s.to_station_id,   b.station_name AS to_station_name,
+        s.total_count, s.sold_count, s.remaining_count
+    </sql>
+
+    <select id="findByTrainAndDate" resultType="com.ticket.module.stock.vo.StockVO">
+        SELECT <include refid="voColumns"/>
+        FROM ticket_stock s
+        LEFT JOIN station a ON a.id = s.from_station_id
+        LEFT JOIN station b ON b.id = s.to_station_id
+        WHERE s.train_id = #{trainId}
+          AND s.travel_date = #{travelDate}
+        ORDER BY s.segment_index, s.seat_type
+    </select>
+
+    <select id="findById" resultType="com.ticket.module.stock.vo.StockVO">
+        SELECT <include refid="voColumns"/>
+        FROM ticket_stock s
+        LEFT JOIN station a ON a.id = s.from_station_id
+        LEFT JOIN station b ON b.id = s.to_station_id
+        WHERE s.id = #{id}
+    </select>
+
+    <!-- 手工调整：remaining 改了，sold 也要跟着改，否则两个数对不上 -->
+    <update id="updateRemaining">
+        UPDATE ticket_stock
+        SET remaining_count = #{remaining},
+            sold_count      = total_count - #{remaining},
+            version         = version + 1
+        WHERE id = #{id}
+    </update>
+
+</mapper>

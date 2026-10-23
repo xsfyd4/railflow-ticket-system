@@ -1,0 +1,132 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.ticket.module.ticket.mapper.TicketSearchMapper">
+
+    <!--
+      查票公共条件：
+      1. 一个车次在同一站只停靠一次，所以出发/到达两个 stop 关联后各只有一条；
+      2. stop_order 小的是出发站，大的是到达站，借此保证方向正确；
+      3. EXISTS 保证当天确实生成了库存，避免返回“有车次但买不了”的数据。
+    -->
+    <sql id="trainRouteFromWhere">
+        FROM train t
+        INNER JOIN train_stop stop_from
+                ON stop_from.train_id = t.id
+               AND stop_from.station_id = #{q.fromStationId}
+        INNER JOIN train_stop stop_to
+                ON stop_to.train_id = t.id
+               AND stop_to.station_id = #{q.toStationId}
+        WHERE t.status = 1
+          AND stop_from.stop_order &lt; stop_to.stop_order
+          AND EXISTS (
+              SELECT 1
+              FROM train_segment seg
+              INNER JOIN train_segment_price price
+                      ON price.train_id = seg.train_id
+                     AND price.segment_index = seg.segment_index
+              INNER JOIN ticket_stock stock
+                      ON stock.train_id = seg.train_id
+                     AND stock.segment_index = seg.segment_index
+                     AND stock.seat_type = price.seat_type
+                     AND stock.travel_date = #{q.travelDate}
+              WHERE seg.train_id = t.id
+                AND seg.segment_index BETWEEN stop_from.stop_order
+                                          AND stop_to.stop_order - 1
+              <if test="q.seatType != null">
+                AND price.seat_type = #{q.seatType}
+              </if>
+          )
+    </sql>
+
+    <select id="countTrains" resultType="long">
+        SELECT COUNT(DISTINCT t.id)
+        <include refid="trainRouteFromWhere"/>
+    </select>
+
+    <!--
+      分页先落在“车次”这一层。
+      如果直接对带席别明细的大 JOIN 做 LIMIT，一个车次占多行，页边界会切坏。
+    -->
+    <select id="findTrainIds" resultType="long">
+        SELECT t.id
+        <include refid="trainRouteFromWhere"/>
+        GROUP BY t.id
+        ORDER BY MIN(stop_from.day_offset), MIN(stop_from.departure_time), t.id
+        LIMIT #{q.size} OFFSET #{offset}
+    </select>
+
+    <!--
+      一行 = 一个车次 + 一个席别。
+      余票取区间所有段的最小值；票价取区间所有段之和。
+    -->
+    <select id="findSeatRows"
+            resultType="com.ticket.module.ticket.vo.TicketSeatRow">
+        SELECT t.id                          AS train_id,
+               t.train_no,
+               t.train_type,
+               station_from.station_name     AS from_station_name,
+               station_to.station_name       AS to_station_name,
+               stop_from.departure_time      AS depart_time,
+               stop_to.arrival_time          AS arrive_time,
+               TIMESTAMPDIFF(
+                   MINUTE,
+                   TIMESTAMP(
+                       DATE_ADD(DATE('2000-01-01'),
+                                INTERVAL stop_from.day_offset DAY),
+                       stop_from.departure_time
+                   ),
+                   TIMESTAMP(
+                       DATE_ADD(DATE('2000-01-01'),
+                                INTERVAL stop_to.day_offset DAY),
+                       stop_to.arrival_time
+                   )
+               )                              AS duration_minutes,
+               stop_to.mileage - stop_from.mileage AS mileage,
+               price.seat_type,
+               MIN(stock.remaining_count)     AS remain_count,
+               SUM(price.price)               AS price
+        FROM train t
+        INNER JOIN train_stop stop_from
+                ON stop_from.train_id = t.id
+               AND stop_from.station_id = #{q.fromStationId}
+        INNER JOIN train_stop stop_to
+                ON stop_to.train_id = t.id
+               AND stop_to.station_id = #{q.toStationId}
+        INNER JOIN station station_from
+                ON station_from.id = stop_from.station_id
+        INNER JOIN station station_to
+                ON station_to.id = stop_to.station_id
+        INNER JOIN train_segment seg
+                ON seg.train_id = t.id
+               AND seg.segment_index BETWEEN stop_from.stop_order
+                                         AND stop_to.stop_order - 1
+        INNER JOIN train_segment_price price
+                ON price.train_id = seg.train_id
+               AND price.segment_index = seg.segment_index
+        INNER JOIN ticket_stock stock
+                ON stock.train_id = seg.train_id
+               AND stock.segment_index = seg.segment_index
+               AND stock.seat_type = price.seat_type
+               AND stock.travel_date = #{q.travelDate}
+        WHERE t.status = 1
+          AND stop_from.stop_order &lt; stop_to.stop_order
+          AND t.id IN
+          <foreach collection="trainIds" item="trainId"
+                   open="(" separator="," close=")">
+              #{trainId}
+          </foreach>
+        <if test="q.seatType != null">
+          AND price.seat_type = #{q.seatType}
+        </if>
+        GROUP BY t.id, t.train_no, t.train_type,
+                 station_from.station_name, station_to.station_name,
+                 stop_from.day_offset, stop_from.departure_time,
+                 stop_to.day_offset, stop_to.arrival_time,
+                 stop_from.mileage, stop_to.mileage,
+                 price.seat_type
+        ORDER BY price.seat_type
+    </select>
+
+</mapper>
