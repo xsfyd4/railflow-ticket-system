@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.ticket.module.train.mapper.TrainSegmentPriceMapper">
+
+    <select id="findByTrainId" resultType="com.ticket.module.train.vo.TrainPriceVO">
+        SELECT segment_index, seat_type, price
+        FROM train_segment_price
+        WHERE train_id = #{trainId}
+        ORDER BY segment_index, seat_type
+    </select>
+
+    <delete id="deleteByTrainId">
+        DELETE FROM train_segment_price WHERE train_id = #{trainId}
+    </delete>
+
+    <insert id="batchInsert">
+        INSERT INTO train_segment_price
+            (train_id, segment_index, seat_type, price)
+        VALUES
+        <foreach collection="list" item="p" separator=",">
+            (#{p.trainId}, #{p.segmentIndex}, #{p.seatType}, #{p.price})
+        </foreach>
+    </insert>
+
+</mapper>

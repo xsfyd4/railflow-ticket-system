@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.ticket.module.train.mapper.TrainSegmentMapper">
+
+    <!-- JOIN 两次 station，所以要用两个别名 a、b -->
+    <select id="findByTrainId" resultType="com.ticket.module.train.vo.TrainSegmentVO">
+        SELECT g.id, g.train_id, g.segment_index,
+               g.from_stop_order, g.to_stop_order,
+               g.from_station_id, a.station_name AS from_station_name,
+               g.to_station_id,   b.station_name AS to_station_name,
+               g.mileage
+        FROM train_segment g
+        LEFT JOIN station a ON a.id = g.from_station_id
+        LEFT JOIN station b ON b.id = g.to_station_id
+        WHERE g.train_id = #{trainId}
+        ORDER BY g.segment_index
+    </select>
+
+    <delete id="deleteByTrainId">
+        DELETE FROM train_segment WHERE train_id = #{trainId}
+    </delete>
+
+    <insert id="batchInsert">
+        INSERT INTO train_segment
+            (train_id, segment_index, from_stop_order, to_stop_order,
+             from_station_id, to_station_id, mileage)
+        VALUES
+        <foreach collection="list" item="g" separator=",">
+            (#{g.trainId}, #{g.segmentIndex}, #{g.fromStopOrder}, #{g.toStopOrder},
+             #{g.fromStationId}, #{g.toStationId}, #{g.mileage})
+        </foreach>
+    </insert>
+
+</mapper>
