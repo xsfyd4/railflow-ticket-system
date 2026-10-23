@@ -63,4 +63,23 @@ public interface TrainMapper {
      * 阶段 5 之前 ticket_order 是空表，这个方法永远返回 0。
      */
     long countOrders(@Param("trainId") Long trainId);
+
+    /**
+     * 这个车次生成过库存没有（任意日期任意段都算）。
+     *
+     * <p>用来判断「能不能改停站」：一旦有库存，segment_index 就和库存绑定了，
+     * 再改站序会让库存对不上分段。所以有库存时禁止修改停站。
+     */
+    long countStocks(@Param("trainId") Long trainId);
+
+    /**
+     * 只更新首尾站和总里程，其他字段不动。
+     *
+     * <p>为什么不用 update(train)？因为那是全量覆盖，
+     * 只 set 三个字段的话，train_no、train_type、status、remark 会被写成 null。
+     */
+    int updateStations(@Param("id") Long id,
+                       @Param("startStationId") Long startStationId,
+                       @Param("endStationId") Long endStationId,
+                       @Param("totalMileage") java.math.BigDecimal totalMileage);
 }

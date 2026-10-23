@@ -66,6 +66,18 @@
             <version>${mybatis.version}</version>
         </dependency>
 
+        <!-- Redis：官方 starter，默认 Lettuce 客户端，版本由父 POM 管理 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-redis</artifactId>
+        </dependency>
+
+        <!-- RabbitMQ：官方 starter（AMQP 协议），版本由父 POM 管理 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-amqp</artifactId>
+        </dependency>
+
         <!-- 参数校验：让 @NotBlank、@Size 这些注解生效，不引它 @Valid 是空转的 -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

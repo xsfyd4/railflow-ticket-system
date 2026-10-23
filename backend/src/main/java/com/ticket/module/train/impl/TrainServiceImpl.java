@@ -16,6 +16,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.yaml.snakeyaml.constructor.DuplicateKeyException;
 
 import java.util.DuplicateFormatFlagsException;
+import java.util.List;
 
 /**
  * 车次管理的实现。
@@ -50,7 +51,18 @@ public class TrainServiceImpl implements TrainService {
         //   2. offset = (page - 1) * size
         //   3. countByQuery + findPage（findPage 已经带站名了，不用再转 VO）
         //   4. PageResult.of(total, page, size, records)
-        throw new UnsupportedOperationException("TODO: 车次分页查询");
+        int page=(query.getPage()==null||query.getPage()<1)?1: query.getPage();
+        int size=(query.getSize()==null||query.getSize()<10)?10:query.getSize();
+        if (size>100){
+            size=100;
+        }
+        query.setSize(size);
+        query.setPage(page);
+        int offest=(page-1)*10;
+        long total=trainMapper.countByQuery(query);
+        List<TrainVO> records=trainMapper.findPage(query,offest);
+        return  PageResult.of(total, page, size, records);
+
     }
 
     @Override

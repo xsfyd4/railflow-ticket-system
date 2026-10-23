@@ -551,3 +551,216 @@ GET http://localhost:8080/api/public/stations?keyword=北京
             "期望 >= 1 条，实际 " + response.body.data.length);
     });
 %}
+
+
+### ==========================================================
+### 阶段 3 · 车次管理
+### 覆盖：分页、搜索、筛选、详情（JOIN 站名）、新增、重名、非法参数、
+###       修改、删除
+### ==========================================================
+
+
+### 39. 管理员登录（拿 token）
+POST http://localhost:8080/api/admin/auth/login
+Content-Type: application/json
+
+{
+  "username": "admin",
+  "password": "123456"
+}
+
+> {%
+    client.test("管理员登录成功", function () {
+        client.assert(response.body.code === 200, "登录失败：" + response.body.msg);
+    });
+    if (response.body.code === 200) {
+        client.global.set("adminToken", response.body.data.token);
+    }
+%}
+
+
+### 40. 车次分页：第 1 页，每页 5 条
+### 如果导入了演示数据，total 应该是 40
+GET http://localhost:8080/api/admin/trains?page=1&size=5
+Authorization: Bearer {{adminToken}}
+
+> {%
+    client.test("车次分页查询成功", function () {
+        client.assert(response.body.code === 200, "期望 200，实际 " + response.body.code);
+        client.assert(response.body.data.total >= 1,
+            "期望至少 1 趟车，实际 " + response.body.data.total);
+        client.assert(response.body.data.records.length >= 1,
+            "期望至少 1 条记录，实际 " + response.body.data.records.length);
+    });
+%}
+
+
+### 41. 按车次号模糊搜索：G10
+GET http://localhost:8080/api/admin/trains?trainNo=G10&page=1&size=10
+Authorization: Bearer {{adminToken}}
+
+> {%
+    client.test("按车次号搜索有结果", function () {
+        client.assert(response.body.code === 200, "期望 200，实际 " + response.body.code);
+        client.assert(response.body.data.records.length >= 1,
+            "期望 >= 1 条，实际 " + response.body.data.records.length);
+    });
+%}
+
+
+### 42. 按类型筛选：G（高铁）
+GET http://localhost:8080/api/admin/trains?trainType=G&page=1&size=10
+Authorization: Bearer {{adminToken}}
+
+> {%
+    client.test("按类型筛选成功", function () {
+        client.assert(response.body.code === 200, "期望 200，实际 " + response.body.code);
+        client.assert(response.body.data.records.length >= 1,
+            "期望 >= 1 条，实际 " + response.body.data.records.length);
+    });
+%}
+
+
+### 43. ★ 车次详情：验证 JOIN 出来的站名
+### 这一条如果 startStationName / endStationName 是 null，
+### 说明 XML 里的 AS 别名写错了，或者驼峰映射没生效
+GET http://localhost:8080/api/admin/trains/1
+Authorization: Bearer {{adminToken}}
+
+> {%
+    client.test("详情的始发/终到站名不为空", function () {
+        client.assert(response.body.code === 200, "期望 200，实际 " + response.body.code);
+        client.assert(response.body.data.startStationName !== null,
+            "startStationName 是 null，检查 XML 里的 AS start_station_name");
+        client.assert(response.body.data.endStationName !== null,
+            "endStationName 是 null，检查 XML 里的 AS end_station_name");
+    });
+%}
+
+
+### 44. 新增一趟测试车次 D9999
+### ⚠️ 如果这里返回 3004，说明上次跑到一半没删掉，先手动删了再跑
+### 提示：始发站用 id=1，终到站用 id=2（两套演示数据里都存在）
+POST http://localhost:8080/api/admin/trains
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+  "trainNo": "D9999",
+  "trainType": "D",
+  "startStationId": 1,
+  "endStationId": 2,
+  "remark": "接口测试"
+}
+
+> {%
+    client.test("新增车次成功并返回 id", function () {
+        client.assert(response.body.code === 200, "新增失败：" + response.body.msg);
+        client.assert(typeof response.body.data === "number",
+            "data 应该是新 id，实际是 " + typeof response.body.data);
+    });
+    if (response.body.code === 200) {
+        client.global.set("newTrainId", response.body.data);
+    }
+%}
+
+
+### 45. 再新增一次同样的车次号
+### 期望 3004（车次号已存在）
+POST http://localhost:8080/api/admin/trains
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+  "trainNo": "D9999",
+  "trainType": "D",
+  "startStationId": 1,
+  "endStationId": 2
+}
+
+> {%
+    client.test("车次号重复应该 3004", function () {
+        client.assert(response.body.code === 3004, "期望 3004，实际 " + response.body.code);
+    });
+%}
+
+
+### 46. 始发站 = 终到站
+### 期望 400（先校验参数，再查重）
+POST http://localhost:8080/api/admin/trains
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+  "trainNo": "D9998",
+  "trainType": "D",
+  "startStationId": 1,
+  "endStationId": 1
+}
+
+> {%
+    client.test("始发站和终到站相同应该 400", function () {
+        client.assert(response.body.code === 400, "期望 400，实际 " + response.body.code);
+    });
+%}
+
+
+### 47. ★ 修改刚新增的车次：只改备注，车次号不变
+### 这条专门验证：
+###   ① 用的是 update 不是 insert
+###   ② train.setId(id) 有没有漏
+###   ③ 查重有没有排除自己
+PUT http://localhost:8080/api/admin/trains/{{newTrainId}}
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+  "trainNo": "D9999",
+  "trainType": "D",
+  "startStationId": 1,
+  "endStationId": 2,
+  "remark": "已修改"
+}
+
+> {%
+    client.test("修改成功", function () {
+        client.assert(response.body.code === 200, "期望 200，实际 " + response.body.code + " / " + response.body.msg);
+    });
+%}
+
+
+### 48. 再查一次，确认备注真的改了
+GET http://localhost:8080/api/admin/trains/{{newTrainId}}
+Authorization: Bearer {{adminToken}}
+
+> {%
+    client.test("备注已经更新", function () {
+        client.assert(response.body.code === 200, "期望 200，实际 " + response.body.code);
+        client.assert(response.body.data.remark === "已修改",
+            "期望备注是【已修改】，实际是 " + response.body.data.remark);
+    });
+%}
+
+
+### 49. 删除刚新增的车次（没有停站、没有订单，可以删）
+### 期望 200
+DELETE http://localhost:8080/api/admin/trains/{{newTrainId}}
+Authorization: Bearer {{adminToken}}
+
+> {%
+    client.test("可以删除没有订单的车次", function () {
+        client.assert(response.body.code === 200, "期望 200，实际 " + response.body.code);
+    });
+%}
+
+
+### 50. 再查一次，确认真的删掉了
+### 期望 2004（TRAIN_NOT_FOUND）
+GET http://localhost:8080/api/admin/trains/{{newTrainId}}
+Authorization: Bearer {{adminToken}}
+
+> {%
+    client.test("删掉之后查不到", function () {
+        client.assert(response.body.code === 2004, "期望 2004，实际 " + response.body.code);
+    });
+%}

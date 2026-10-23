@@ -148,4 +148,18 @@
         SELECT COUNT(*) FROM ticket_order WHERE train_id = #{trainId}
     </select>
 
+    <!-- 有库存就不许改停站 -->
+    <select id="countStocks" resultType="long">
+        SELECT COUNT(*) FROM ticket_stock WHERE train_id = #{trainId}
+    </select>
+
+    <!-- 改停站后同步首尾站和总里程（只更新这三列） -->
+    <update id="updateStations">
+        UPDATE train
+        SET start_station_id = #{startStationId},
+            end_station_id   = #{endStationId},
+            total_mileage    = #{totalMileage}
+        WHERE id = #{id}
+    </update>
+
 </mapper>
