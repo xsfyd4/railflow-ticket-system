@@ -764,3 +764,195 @@ Authorization: Bearer {{adminToken}}
         client.assert(response.body.code === 2004, "期望 2004，实际 " + response.body.code);
     });
 %}
+
+
+### ==========================================================
+### 阶段 3 · 停站 / 分段 / 票价
+### 用 G1001（trainId = 1）做"幂等测试"：原样保存一遍，数据不能翻倍
+### ⚠️ 如果你的演示数据不是这 5 个站，请把 stationId / 里程改掉
+### ==========================================================
+
+
+### 51. 管理员登录
+POST http://localhost:8080/api/admin/auth/login
+Content-Type: application/json
+
+{
+  "username": "admin",
+  "password": "123456"
+}
+
+> {%
+    client.test("管理员登录成功", function () {
+        client.assert(response.body.code === 200, "登录失败：" + response.body.msg);
+    });
+    if (response.body.code === 200) {
+        client.global.set("adminToken", response.body.data.token);
+    }
+%}
+
+
+### 52. 查 G1001 的停站（按站序）
+GET http://localhost:8080/api/admin/trains/1/stops
+Authorization: Bearer {{adminToken}}
+
+> {%
+    client.test("停站列表能查到，且带站名", function () {
+        client.assert(response.body.code === 200, "期望 200，实际 " + response.body.code);
+        client.assert(response.body.data.length >= 2,
+            "期望至少 2 站，实际 " + response.body.data.length);
+        client.assert(response.body.data[0].stationName !== null,
+            "stationName 是 null，检查 TrainStopMapper.xml 的 JOIN");
+    });
+%}
+
+
+### 53. 查 G1001 的分段（按段号）
+GET http://localhost:8080/api/admin/trains/1/segments
+Authorization: Bearer {{adminToken}}
+
+> {%
+    client.test("分段列表能查到，且带起止站名", function () {
+        client.assert(response.body.code === 200, "期望 200，实际 " + response.body.code);
+        client.assert(response.body.data.length >= 1,
+            "期望至少 1 段，实际 " + response.body.data.length);
+        client.assert(response.body.data[0].fromStationName !== null,
+            "fromStationName 是 null，检查 TrainSegmentMapper.xml 的别名");
+    });
+%}
+
+
+### 54. ★ 原样保存停站（5 站）
+### 这一步会：删旧停站 → 插新停站 → 重建分段 → 同步 train 首尾站和里程 → 删掉旧票价
+PUT http://localhost:8080/api/admin/trains/1/stops
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+  "stops": [
+    { "stationId": 1,  "departureTime": "07:17", "mileage": 0 },
+    { "stationId": 51, "arrivalTime": "09:00", "departureTime": "09:02", "mileage": 485 },
+    { "stationId": 30, "arrivalTime": "10:47", "departureTime": "10:49", "mileage": 977 },
+    { "stationId": 32, "arrivalTime": "11:19", "departureTime": "11:21", "mileage": 1119 },
+    { "stationId": 27, "arrivalTime": "12:18", "mileage": 1388 }
+  ]
+}
+
+> {%
+    client.test("保存停站成功", function () {
+        client.assert(response.body.code === 200,
+            "期望 200，实际 " + response.body.code + " / " + response.body.msg);
+    });
+%}
+
+
+### 55. ★ 再查停站 —— 应该还是 5 条（不是 10 条）
+GET http://localhost:8080/api/admin/trains/1/stops
+Authorization: Bearer {{adminToken}}
+
+> {%
+    client.test("停站没有翻倍", function () {
+        client.assert(response.body.code === 200, "期望 200，实际 " + response.body.code);
+        client.assert(response.body.data.length === 5,
+            "期望 5 条（先删后插），实际 " + response.body.data.length + " 条");
+    });
+%}
+
+
+### 56. ★ 再查分段 —— 应该还是 4 条（不是 8 条）
+GET http://localhost:8080/api/admin/trains/1/segments
+Authorization: Bearer {{adminToken}}
+
+> {%
+    client.test("分段没有翻倍", function () {
+        client.assert(response.body.code === 200, "期望 200，实际 " + response.body.code);
+        client.assert(response.body.data.length === 4,
+            "期望 4 条（5 站 → 4 段），实际 " + response.body.data.length + " 条");
+    });
+%}
+
+
+### 57. 配置票价：4 段 × 3 席别 = 12 条
+PUT http://localhost:8080/api/admin/trains/1/prices
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+  "prices": [
+    { "segmentIndex": 1, "seatType": 1, "price": 540 },
+    { "segmentIndex": 1, "seatType": 2, "price": 288 },
+    { "segmentIndex": 1, "seatType": 3, "price": 171 },
+    { "segmentIndex": 2, "seatType": 1, "price": 820 },
+    { "segmentIndex": 2, "seatType": 2, "price": 438 },
+    { "segmentIndex": 2, "seatType": 3, "price": 259 },
+    { "segmentIndex": 3, "seatType": 1, "price": 285 },
+    { "segmentIndex": 3, "seatType": 2, "price": 152 },
+    { "segmentIndex": 3, "seatType": 3, "price": 90 },
+    { "segmentIndex": 4, "seatType": 1, "price": 103 },
+    { "segmentIndex": 4, "seatType": 2, "price": 55 },
+    { "segmentIndex": 4, "seatType": 3, "price": 33 }
+  ]
+}
+
+> {%
+    client.test("保存票价成功", function () {
+        client.assert(response.body.code === 200,
+            "期望 200，实际 " + response.body.code + " / " + response.body.msg);
+    });
+%}
+
+
+### 58. 查票价 —— 应该 12 条
+GET http://localhost:8080/api/admin/trains/1/prices
+Authorization: Bearer {{adminToken}}
+
+> {%
+    client.test("票价是 12 条", function () {
+        client.assert(response.body.code === 200, "期望 200，实际 " + response.body.code);
+        client.assert(response.body.data.length === 12,
+            "期望 12 条（4 段 × 3 席别），实际 " + response.body.data.length + " 条");
+    });
+%}
+
+
+### 59. ★ 再保存一次同样的票价（验证先删后插）
+PUT http://localhost:8080/api/admin/trains/1/prices
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+  "prices": [
+    { "segmentIndex": 1, "seatType": 1, "price": 540 },
+    { "segmentIndex": 1, "seatType": 2, "price": 288 },
+    { "segmentIndex": 1, "seatType": 3, "price": 171 },
+    { "segmentIndex": 2, "seatType": 1, "price": 820 },
+    { "segmentIndex": 2, "seatType": 2, "price": 438 },
+    { "segmentIndex": 2, "seatType": 3, "price": 259 },
+    { "segmentIndex": 3, "seatType": 1, "price": 285 },
+    { "segmentIndex": 3, "seatType": 2, "price": 152 },
+    { "segmentIndex": 3, "seatType": 3, "price": 90 },
+    { "segmentIndex": 4, "seatType": 1, "price": 103 },
+    { "segmentIndex": 4, "seatType": 2, "price": 55 },
+    { "segmentIndex": 4, "seatType": 3, "price": 33 }
+  ]
+}
+
+> {%
+    client.test("重复保存不报错", function () {
+        client.assert(response.body.code === 200,
+            "期望 200，实际 " + response.body.code + " / " + response.body.msg);
+    });
+%}
+
+
+### 60. 再查票价 —— 应该还是 12 条（不是 24 条）
+GET http://localhost:8080/api/admin/trains/1/prices
+Authorization: Bearer {{adminToken}}
+
+> {%
+    client.test("票价没有翻倍", function () {
+        client.assert(response.body.code === 200, "期望 200，实际 " + response.body.code);
+        client.assert(response.body.data.length === 12,
+            "期望 12 条（先删后插），实际 " + response.body.data.length + " 条");
+    });
+%}
