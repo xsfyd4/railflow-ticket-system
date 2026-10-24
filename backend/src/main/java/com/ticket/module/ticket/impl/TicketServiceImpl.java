@@ -2,6 +2,7 @@ package com.ticket.module.ticket.impl;
 
 import com.ticket.common.result.PageResult;
 import com.ticket.module.ticket.TicketService;
+import com.ticket.module.ticket.TicketSearchCache;
 import com.ticket.module.ticket.dto.TicketSearchDTO;
 import com.ticket.module.ticket.mapper.TicketSearchMapper;
 import com.ticket.module.ticket.vo.TicketSeatRow;
@@ -18,9 +19,12 @@ import java.util.Map;
 public class TicketServiceImpl implements TicketService {
 
     private final TicketSearchMapper mapper;
+    private final TicketSearchCache cache;
 
-    public TicketServiceImpl(TicketSearchMapper mapper) {
+    public TicketServiceImpl(TicketSearchMapper mapper,
+                             TicketSearchCache cache) {
         this.mapper = mapper;
+        this.cache = cache;
     }
 
     @Override
@@ -34,17 +38,35 @@ public class TicketServiceImpl implements TicketService {
         q.setPage(page);
         q.setSize(size);
 
+        /*
+         * 缓存命中时完全不访问 MySQL，也不开启数据库事务。
+         * 版本在数据库查询前确定，写入时继续使用同一版本；
+         * 如果期间发生库存变化，新版本会使本次旧结果不可达。
+         */
+        TicketSearchCache.CacheToken cacheToken =
+                cache.currentToken(q.getTravelDate());
+        PageResult<TicketVO> cached = cache.get(q, cacheToken);
+        if (cached != null) {
+            return cached;
+        }
+
         // 2. 先数车次
         long total = mapper.countTrains(q);
         if (total == 0) {
-            return PageResult.of(0, page, size, List.of());
+            PageResult<TicketVO> result =
+                    PageResult.of(0, page, size, List.of());
+            cache.put(q, cacheToken, result);
+            return result;
         }
 
         // 3. 取当页车次 id（分页在这一步，不会被席别放大）
         int offset = (page - 1) * size;
         List<Long> ids = mapper.findTrainIds(q, offset);
         if (ids.isEmpty()) {
-            return PageResult.of(total, page, size, List.of());
+            PageResult<TicketVO> result =
+                    PageResult.of(total, page, size, List.of());
+            cache.put(q, cacheToken, result);
+            return result;
         }
 
         // 4. 按 id 查席别余票（一行 = 一个车次 + 一个席别）
@@ -66,7 +88,10 @@ public class TicketServiceImpl implements TicketService {
                 records.add(vo);
             }
         }
-        return PageResult.of(total, page, size, records);
+        PageResult<TicketVO> result =
+                PageResult.of(total, page, size, records);
+        cache.put(q, cacheToken, result);
+        return result;
     }
 
     private TicketVO toVO(TicketSeatRow r) {

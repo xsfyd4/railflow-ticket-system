@@ -11,6 +11,7 @@ import com.ticket.module.train.dto.TrainSaveDTO;
 import com.ticket.module.train.entity.Train;
 import com.ticket.module.train.mapper.TrainMapper;
 import com.ticket.module.train.vo.TrainVO;
+import com.ticket.module.ticket.TicketCacheInvalidator;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.yaml.snakeyaml.constructor.DuplicateKeyException;
@@ -37,10 +38,14 @@ public class TrainServiceImpl implements TrainService {
 
     private final TrainMapper trainMapper;
     private final StationMapper stationMapper;
+    private final TicketCacheInvalidator cacheInvalidator;
 
-    public TrainServiceImpl(TrainMapper trainMapper, StationMapper stationMapper) {
+    public TrainServiceImpl(TrainMapper trainMapper,
+                            StationMapper stationMapper,
+                            TicketCacheInvalidator cacheInvalidator) {
         this.trainMapper = trainMapper;
         this.stationMapper = stationMapper;
+        this.cacheInvalidator = cacheInvalidator;
     }
 
     @Override
@@ -105,6 +110,7 @@ public class TrainServiceImpl implements TrainService {
         }catch(DuplicateKeyException e){
             throw new BizException(ResultCode.TRAIN_NO_EXISTS);
         }
+        cacheInvalidator.invalidateAllAfterCommit();
         return train.getId();
     }
 
@@ -140,6 +146,7 @@ public class TrainServiceImpl implements TrainService {
         }catch(DuplicateKeyException e){
             throw new BizException(ResultCode.TRAIN_NO_EXISTS);
         }
+        cacheInvalidator.invalidateAllAfterCommit();
 
     }
 
@@ -165,5 +172,6 @@ public class TrainServiceImpl implements TrainService {
         trainMapper.deleteSegmentsByTrainId(id);    // 分段
         trainMapper.deleteStopsByTrainId(id);       // 停站
         trainMapper.deleteById(id);                 // 车次本身
+        cacheInvalidator.invalidateAllAfterCommit();
     }
 }

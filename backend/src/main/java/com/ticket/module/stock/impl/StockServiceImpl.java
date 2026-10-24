@@ -8,6 +8,7 @@ import com.ticket.module.stock.dto.StockQueryDTO;
 import com.ticket.module.stock.entity.TicketStock;
 import com.ticket.module.stock.mapper.TicketStockMapper;
 import com.ticket.module.stock.vo.StockVO;
+import com.ticket.module.ticket.TicketCacheInvalidator;
 import com.ticket.module.train.entity.Train;
 import com.ticket.module.train.mapper.TrainMapper;
 import com.ticket.module.train.mapper.TrainSegmentMapper;
@@ -35,13 +36,16 @@ public class StockServiceImpl implements StockService {
     private final TrainMapper trainMapper;
     private final TrainSegmentMapper segmentMapper;
     private final TicketStockMapper stockMapper;
+    private final TicketCacheInvalidator cacheInvalidator;
 
     public StockServiceImpl(TrainMapper trainMapper,
                             TrainSegmentMapper segmentMapper,
-                            TicketStockMapper stockMapper) {
+                            TicketStockMapper stockMapper,
+                            TicketCacheInvalidator cacheInvalidator) {
         this.trainMapper = trainMapper;
         this.segmentMapper = segmentMapper;
         this.stockMapper = stockMapper;
+        this.cacheInvalidator = cacheInvalidator;
     }
 
     @Override
@@ -84,6 +88,7 @@ public class StockServiceImpl implements StockService {
          * 生成前后各数一次，差值是真实新增条数。
          */
         long afterCount = stockMapper.countByDateRange(start, endExclusive);
+        cacheInvalidator.invalidateAllAfterCommit();
         return Math.toIntExact(afterCount - beforeCount);
     }
 
@@ -104,6 +109,7 @@ public class StockServiceImpl implements StockService {
                     "剩余票数不能大于总票数（" + stock.getTotalCount() + "）");
         }
         stockMapper.updateRemaining(id, dto.getRemainingCount());
+        cacheInvalidator.invalidateDateAfterCommit(stock.getTravelDate());
     }
 
     /** 组装一条库存记录 */

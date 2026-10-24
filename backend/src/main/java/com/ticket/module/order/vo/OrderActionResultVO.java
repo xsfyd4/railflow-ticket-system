@@ -10,6 +10,15 @@ public class OrderActionResultVO {
     private LocalDateTime paidAt;
     private LocalDateTime cancelledAt;
 
+    /** 本次支付对应的流水号；重复支付时返回首次成功的那一条。 */
+    private String payNo;
+
+    /** 支付渠道。 */
+    private String channel;
+
+    /** true 表示本次请求命中了幂等重放，没有再次扣款。 */
+    private Boolean idempotentReplay;
+
     public String getOrderNo() {
         return orderNo;
     }
@@ -40,5 +49,29 @@ public class OrderActionResultVO {
 
     public void setCancelledAt(LocalDateTime cancelledAt) {
         this.cancelledAt = cancelledAt;
+    }
+
+    public String getPayNo() {
+        return payNo;
+    }
+
+    public void setPayNo(String payNo) {
+        this.payNo = payNo;
+    }
+
+    public String getChannel() {
+        return channel;
+    }
+
+    public void setChannel(String channel) {
+        this.channel = channel;
+    }
+
+    public Boolean getIdempotentReplay() {
+        return idempotentReplay;
+    }
+
+    public void setIdempotentReplay(Boolean idempotentReplay) {
+        this.idempotentReplay = idempotentReplay;
     }
 }

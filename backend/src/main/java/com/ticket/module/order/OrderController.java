@@ -4,19 +4,24 @@ import com.ticket.common.result.PageResult;
 import com.ticket.common.result.R;
 import com.ticket.module.order.dto.CreateOrderDTO;
 import com.ticket.module.order.dto.OrderQueryDTO;
+import com.ticket.module.order.dto.PayOrderDTO;
 import com.ticket.module.order.dto.RefundOrderDTO;
 import com.ticket.module.order.vo.CreateOrderVO;
 import com.ticket.module.order.vo.OrderActionResultVO;
 import com.ticket.module.order.vo.OrderDetailVO;
 import com.ticket.module.order.vo.OrderVO;
+import com.ticket.module.order.vo.PayLogVO;
 import com.ticket.module.order.vo.RefundResultVO;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+
+import java.util.List;
 
 /**
  * 用户端订单接口入口。
@@ -51,10 +56,25 @@ public class OrderController {
         return R.ok(orderService.detail(orderNo));
     }
 
-    /** POST /api/user/orders/{orderNo}/pay */
+    /**
+     * POST /api/user/orders/{orderNo}/pay
+     *
+     * <p>幂等键优先级：请求头 {@code Idempotency-Key} &gt; 请求体 requestId &gt; 服务端自动生成。
+     * 同一个键重复调用只扣一次钱，并返回首次成功的流水号。
+     */
     @PostMapping("/{orderNo}/pay")
-    public R<OrderActionResultVO> pay(@PathVariable String orderNo) {
-        return R.ok("支付成功", orderService.pay(orderNo));
+    public R<OrderActionResultVO> pay(
+            @PathVariable String orderNo,
+            @RequestHeader(value = "Idempotency-Key", required = false)
+            String idempotencyKey,
+            @RequestBody(required = false) PayOrderDTO dto) {
+        return R.ok("支付成功", orderService.pay(orderNo, idempotencyKey, dto));
+    }
+
+    /** GET /api/user/orders/{orderNo}/payments —— 查看这笔订单的全部支付尝试 */
+    @GetMapping("/{orderNo}/payments")
+    public R<List<PayLogVO>> payments(@PathVariable String orderNo) {
+        return R.ok(orderService.payments(orderNo));
     }
 
     /** POST /api/user/orders/{orderNo}/cancel */

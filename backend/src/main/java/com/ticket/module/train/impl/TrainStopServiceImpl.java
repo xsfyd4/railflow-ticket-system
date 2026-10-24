@@ -17,6 +17,7 @@ import com.ticket.module.train.mapper.TrainStopMapper;
 import com.ticket.module.train.vo.TrainPriceVO;
 import com.ticket.module.train.vo.TrainSegmentVO;
 import com.ticket.module.train.vo.TrainStopVO;
+import com.ticket.module.ticket.TicketCacheInvalidator;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -38,15 +39,18 @@ public class TrainStopServiceImpl implements TrainStopService {
     private final TrainStopMapper stopMapper;
     private final TrainSegmentMapper segmentMapper;
     private final TrainSegmentPriceMapper priceMapper;
+    private final TicketCacheInvalidator cacheInvalidator;
 
     public TrainStopServiceImpl(TrainMapper trainMapper,
                                 TrainStopMapper stopMapper,
                                 TrainSegmentMapper segmentMapper,
-                                TrainSegmentPriceMapper priceMapper) {
+                                TrainSegmentPriceMapper priceMapper,
+                                TicketCacheInvalidator cacheInvalidator) {
         this.trainMapper = trainMapper;
         this.stopMapper = stopMapper;
         this.segmentMapper = segmentMapper;
         this.priceMapper = priceMapper;
+        this.cacheInvalidator = cacheInvalidator;
     }
 
     @Override
@@ -110,6 +114,7 @@ public class TrainStopServiceImpl implements TrainStopService {
         TrainStopItemDTO last = stops.get(stops.size() - 1);
         BigDecimal totalMileage = last.getMileage() == null ? BigDecimal.ZERO : last.getMileage();
         trainMapper.updateStations(trainId, first.getStationId(), last.getStationId(), totalMileage);
+        cacheInvalidator.invalidateAllAfterCommit();
     }
 
     @Override
@@ -164,6 +169,7 @@ public class TrainStopServiceImpl implements TrainStopService {
             prices.add(p);
         }
         priceMapper.batchInsert(prices);
+        cacheInvalidator.invalidateAllAfterCommit();
     }
 
     // ==================== 私有工具方法 ====================

@@ -9,6 +9,7 @@ import com.ticket.module.station.dto.StationSaveDTO;
 import com.ticket.module.station.entity.Station;
 import com.ticket.module.station.mapper.StationMapper;
 import com.ticket.module.station.vo.StationVO;
+import com.ticket.module.ticket.TicketCacheInvalidator;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 
@@ -28,9 +29,12 @@ import java.util.List;
 public class StationServiceImpl implements StationService {
 
     private final StationMapper stationMapper;
+    private final TicketCacheInvalidator cacheInvalidator;
 
-    public StationServiceImpl(StationMapper stationMapper) {
+    public StationServiceImpl(StationMapper stationMapper,
+                              TicketCacheInvalidator cacheInvalidator) {
         this.stationMapper = stationMapper;
+        this.cacheInvalidator = cacheInvalidator;
     }
 
     @Override
@@ -124,6 +128,7 @@ public class StationServiceImpl implements StationService {
         // status 没传时保持原值，避免把停用的车站悄悄启用
         station.setStatus(dto.getStatus() == null ? station.getStatus() : dto.getStatus());
         stationMapper.update(station);
+        cacheInvalidator.invalidateAllAfterCommit();
 
     }
 
@@ -143,6 +148,7 @@ public class StationServiceImpl implements StationService {
 
         // 3. 没人用，真删
         stationMapper.deleteById(id);
+        cacheInvalidator.invalidateAllAfterCommit();
     }
 
     @Override

@@ -72,6 +72,12 @@
             <artifactId>spring-boot-starter-data-redis</artifactId>
         </dependency>
 
+        <!-- Redis 同步客户端。项目是同步 Spring MVC，不需要 Lettuce 的异步事件循环。 -->
+        <dependency>
+            <groupId>redis.clients</groupId>
+            <artifactId>jedis</artifactId>
+        </dependency>
+
         <!-- RabbitMQ：官方 starter（AMQP 协议），版本由父 POM 管理 -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

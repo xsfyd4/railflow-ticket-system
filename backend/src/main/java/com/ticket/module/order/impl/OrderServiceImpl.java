@@ -6,22 +6,28 @@ import com.ticket.common.result.ResultCode;
 import com.ticket.module.order.OrderService;
 import com.ticket.module.order.dto.CreateOrderDTO;
 import com.ticket.module.order.dto.OrderQueryDTO;
+import com.ticket.module.order.dto.PayOrderDTO;
 import com.ticket.module.order.dto.RefundOrderDTO;
+import com.ticket.module.order.entity.PayLog;
 import com.ticket.module.order.entity.TicketOrder;
 import com.ticket.module.order.entity.TicketOrderItem;
 import com.ticket.module.order.mapper.OrderMapper;
+import com.ticket.module.order.mapper.PayLogMapper;
 import com.ticket.module.order.vo.CreateOrderVO;
 import com.ticket.module.order.vo.OrderActionResultVO;
 import com.ticket.module.order.vo.OrderDetailVO;
 import com.ticket.module.order.vo.OrderItemVO;
 import com.ticket.module.order.vo.OrderRouteVO;
 import com.ticket.module.order.vo.OrderVO;
+import com.ticket.module.order.vo.PayLogVO;
 import com.ticket.module.order.vo.RefundResultVO;
 import com.ticket.module.passenger.entity.Passenger;
 import com.ticket.module.passenger.mapper.PassengerMapper;
+import com.ticket.module.ticket.TicketCacheInvalidator;
 import com.ticket.module.train.vo.TrainPriceVO;
 import com.ticket.security.LoginUser;
 import com.ticket.security.LoginUserContext;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -98,6 +104,15 @@ public class OrderServiceImpl implements OrderService {
     /** 乘车人 Mapper：确认乘车人属于当前登录用户，并取得姓名和证件号快照。 */
     private final PassengerMapper passengerMapper;
 
+    /** 支付流水 Mapper：支付幂等重放与流水查询。 */
+    private final PayLogMapper payLogMapper;
+
+    /** 支付事务边界：先建流水抢占幂等键，再在独立事务里完成扣款状态流转。 */
+    private final OrderPayTxService payTxService;
+
+    /** 订单改变库存后，在事务提交后失效查票缓存。 */
+    private final TicketCacheInvalidator cacheInvalidator;
+
     /**
      * 构造器注入。
      *
@@ -105,9 +120,15 @@ public class OrderServiceImpl implements OrderService {
      * 不需要我们自己 new。这样 Service 只关注业务，不关心数据库连接怎么建立。
      */
     public OrderServiceImpl(OrderMapper orderMapper,
-                            PassengerMapper passengerMapper) {
+                            PassengerMapper passengerMapper,
+                            PayLogMapper payLogMapper,
+                            OrderPayTxService payTxService,
+                            TicketCacheInvalidator cacheInvalidator) {
         this.orderMapper = orderMapper;
         this.passengerMapper = passengerMapper;
+        this.payLogMapper = payLogMapper;
+        this.payTxService = payTxService;
+        this.cacheInvalidator = cacheInvalidator;
     }
 
     /**
@@ -262,6 +283,8 @@ public class OrderServiceImpl implements OrderService {
             orderMapper.insertItem(item);
         }
 
+        cacheInvalidator.invalidateDateAfterCommit(dto.getTravelDate());
+
         // 到这里库存和两张订单表都写成功，返回前端页面需要的下单结果。
         return toCreateOrderVO(order);
     }
@@ -306,32 +329,159 @@ public class OrderServiceImpl implements OrderService {
         return order;
     }
 
+    /**
+     * 支付（幂等）。
+     *
+     * <p>流程分三段：
+     * <ol>
+     *   <li>解析幂等键，先在独立事务里插入 {@code pay_log}，用唯一索引抢占；</li>
+     *   <li>事务内锁订单、条件更新为已支付，并把流水置为成功；</li>
+     *   <li>同一幂等键的重复请求不再扣款，而是重放第一次的结果。</li>
+     * </ol>
+     *
+     * <p>注意这里故意不加 {@code @Transactional}：建流水必须是独立事务，
+     * 否则唯一键冲突会把外层事务标记为 rollback-only，后面的重放查询也没法继续。
+     */
     @Override
-    @Transactional(rollbackFor = Exception.class)
-    public OrderActionResultVO pay(String orderNo) {
+    public OrderActionResultVO pay(String orderNo,
+                                   String idempotencyKey,
+                                   PayOrderDTO dto) {
         Long userId = currentUserId();
+        String requestId = resolveRequestId(idempotencyKey, dto, userId, orderNo);
+        String channel = resolveChannel(dto);
 
-        /*
-         * FOR UPDATE 会锁住这一行订单。另一个同时到达的支付或取消请求
-         * 必须等待本事务结束，之后再读取时就能看到最新状态。
-         */
-        TicketOrder order = lockOwnedOrder(orderNo, userId);
-        if (order.getStatus() != STATUS_PENDING_PAYMENT) {
-            throw new BizException(ResultCode.ORDER_STATUS_ERROR);
+        PayLog attempt;
+        try {
+            attempt = payTxService.openAttempt(
+                    userId, orderNo, requestId, channel);
+        } catch (DuplicateKeyException duplicate) {
+            // 幂等键已存在：这次支付已经成功、失败，或正在处理中
+            return replayExisting(userId, orderNo, requestId);
         }
 
-        LocalDateTime now = LocalDateTime.now();
-        if (order.getExpireTime() == null
-                || !order.getExpireTime().isAfter(now)) {
-            throw new BizException(ResultCode.ORDER_EXPIRED);
+        try {
+            return payTxService.complete(attempt);
+        } catch (RuntimeException e) {
+            try {
+                payTxService.fail(
+                        attempt.getId(), PayLog.STATUS_FAILED, e.getMessage());
+            } catch (RuntimeException ignore) {
+                // 写失败原因本身失败时，不能掩盖原始业务异常
+            }
+            throw e;
+        }
+    }
+
+    @Override
+    public List<PayLogVO> payments(String orderNo) {
+        Long userId = currentUserId();
+        if (orderMapper.findByOrderNoAndUser(orderNo, userId) == null) {
+            throw new BizException(ResultCode.ORDER_NOT_FOUND);
+        }
+        return payLogMapper.findByOrderNoAndUser(orderNo, userId);
+    }
+
+    /**
+     * 同一幂等键重复到达：读取已有流水并重放结果。
+     *
+     * <p>如果另一条请求还在处理中，最多等待 1 秒再返回“处理中”，
+     * 这样并发重复点击在绝大多数情况下拿到的都是同一个成功结果。
+     */
+    private OrderActionResultVO replayExisting(Long userId,
+                                               String orderNo,
+                                               String requestId) {
+        PayLog payLog = null;
+        for (int i = 0; i < 20; i++) {
+            payLog = payLogMapper.findByRequestId(requestId);
+            if (payLog != null) {
+                if (!userId.equals(payLog.getUserId())
+                        || !orderNo.equals(payLog.getOrderNo())) {
+                    throw new BizException(ResultCode.PAY_REQUEST_CONFLICT);
+                }
+                if (payLog.getStatus() != PayLog.STATUS_PROCESSING) {
+                    return replayResult(payLog);
+                }
+            }
+            sleepQuietly(50L);
+        }
+        throw new BizException(ResultCode.PAY_PROCESSING);
+    }
+
+    private OrderActionResultVO replayResult(PayLog payLog) {
+        TicketOrder order = orderMapper.findByOrderNoAndUser(
+                payLog.getOrderNo(), payLog.getUserId());
+        if (order == null) {
+            throw new BizException(ResultCode.ORDER_NOT_FOUND);
         }
 
-        // UPDATE 仍带 status=0，是行锁之外的第二道并发保护。
-        int affected = orderMapper.markPaid(order.getId(), now);
-        if (affected != 1) {
-            throw new BizException(ResultCode.ORDER_STATUS_ERROR);
+        if (payLog.getStatus() == PayLog.STATUS_SUCCESS) {
+            return buildPayResult(order, payLog, true);
         }
-        return actionResult(order.getOrderNo(), STATUS_PAID, now, null);
+
+        // 本次尝试失败/关闭，但订单可能已经被另一条流水支付成功
+        if (order.getStatus() == STATUS_PAID) {
+            PayLog success = payLogMapper.findSuccessByOrderId(order.getId());
+            return buildPayResult(order, success, true);
+        }
+
+        String reason = payLog.getFailReason() == null
+                ? ResultCode.PAY_FAILED.getMsg() : payLog.getFailReason();
+        throw new BizException(ResultCode.PAY_FAILED.getCode(), reason);
+    }
+
+    private OrderActionResultVO buildPayResult(TicketOrder order,
+                                               PayLog payLog,
+                                               boolean replay) {
+        OrderActionResultVO result = new OrderActionResultVO();
+        result.setOrderNo(order.getOrderNo());
+        result.setStatus(STATUS_PAID);
+        result.setPaidAt(payLog != null && payLog.getPaidAt() != null
+                ? payLog.getPaidAt() : order.getPaidAt());
+        result.setPayNo(payLog == null ? null : payLog.getPayNo());
+        result.setChannel(payLog == null ? null : payLog.getChannel());
+        result.setIdempotentReplay(replay);
+        return result;
+    }
+
+    private String resolveRequestId(String headerKey,
+                                    PayOrderDTO dto,
+                                    Long userId,
+                                    String orderNo) {
+        String raw = headerKey;
+        if (raw == null || raw.isBlank()) {
+            raw = dto == null ? null : dto.getRequestId();
+        }
+        if (raw == null || raw.isBlank()) {
+            /*
+             * 没传幂等键时用“用户 + 订单”生成固定键：
+             * 同一用户对同一订单重复点击支付，天然只会生成一条流水。
+             */
+            return "AUTO:" + userId + ":" + orderNo;
+        }
+        raw = raw.trim();
+        if (raw.length() > 64) {
+            throw new BizException(400, "幂等键长度不能超过 64 个字符");
+        }
+        return raw;
+    }
+
+    private String resolveChannel(PayOrderDTO dto) {
+        String channel = dto == null
+                || dto.getChannel() == null
+                || dto.getChannel().isBlank()
+                ? "MOCK" : dto.getChannel().trim().toUpperCase();
+        if (!"MOCK".equals(channel)) {
+            throw new BizException(ResultCode.PAY_CHANNEL_NOT_SUPPORTED);
+        }
+        return channel;
+    }
+
+    private static void sleepQuietly(long millis) {
+        try {
+            Thread.sleep(millis);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     @Override
@@ -365,6 +515,7 @@ public class OrderServiceImpl implements OrderService {
         if (statusAffected != 1) {
             throw new BizException(ResultCode.ORDER_STATUS_ERROR);
         }
+        cacheInvalidator.invalidateDateAfterCommit(order.getTravelDate());
         return actionResult(
                 order.getOrderNo(), STATUS_CANCELLED, null, now);
     }
@@ -455,6 +606,7 @@ public class OrderServiceImpl implements OrderService {
         if (summaryAffected != 1) {
             throw new BizException(ResultCode.ORDER_STATUS_ERROR);
         }
+        cacheInvalidator.invalidateDateAfterCommit(order.getTravelDate());
 
         RefundResultVO result = new RefundResultVO();
         result.setOrderNo(order.getOrderNo());

@@ -155,6 +155,21 @@
       FOR UPDATE 是支付/取消的互斥锁点。
       相同订单的另一个请求会等待，随后读到已经变化的状态。
     -->
+    <select id="findByOrderNoAndUser"
+            resultType="com.ticket.module.order.entity.TicketOrder">
+        SELECT id, order_no, user_id, train_id, train_no, travel_date,
+               from_station_id, to_station_id,
+               from_segment_index, to_segment_index,
+               seat_type, passenger_count, total_amount,
+               status, expire_time, paid_at, cancelled_at,
+               refunded_count, refunded_amount, last_refunded_at,
+               created_at, updated_at
+        FROM ticket_order
+        WHERE order_no = #{orderNo}
+          AND user_id = #{userId}
+        LIMIT 1
+    </select>
+
     <select id="findByOrderNoAndUserForUpdate"
             resultType="com.ticket.module.order.entity.TicketOrder">
         SELECT id, order_no, user_id, train_id, train_no, travel_date,

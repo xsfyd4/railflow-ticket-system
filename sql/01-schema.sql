@@ -268,7 +268,71 @@ CREATE TABLE `ticket_order_item` (
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '订单明细表（一票一行）';
 
 
--- 12. 管理端操作日志（阶段 6 再接入）
+-- 12. 支付流水：订单只说明“买了什么”，支付流水才说明“钱扣没扣、扣了几次”
+--     支付幂等靠三个唯一索引兜底：
+--       request_id       同一个幂等键只能生成一条流水
+--       external_txn_id  第三方支付流水号只能入账一次（回调重放安全）
+--       success_order_id 生成列，保证一个订单最多一条成功流水
+DROP TABLE IF EXISTS `pay_log`;
+CREATE TABLE `pay_log` (
+  `id`               BIGINT        NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `pay_no`           VARCHAR(40)   NOT NULL                COMMENT '本系统支付流水号（唯一）',
+  `request_id`       VARCHAR(64)   NOT NULL                COMMENT '幂等键：同一次支付请求重试必须相同',
+  `order_id`         BIGINT        NOT NULL                COMMENT '订单 ticket_order.id',
+  `order_no`         VARCHAR(32)   NOT NULL                COMMENT '订单号（冗余，方便排障）',
+  `user_id`          BIGINT        NOT NULL                COMMENT '付款账号 sys_user.id',
+  `amount`           DECIMAL(10,2) NOT NULL                COMMENT '本次支付金额（元）',
+  `channel`          VARCHAR(20)   NOT NULL DEFAULT 'MOCK' COMMENT '支付渠道：MOCK/ALIPAY/WECHAT',
+  `status`           TINYINT       NOT NULL DEFAULT 0      COMMENT '0=处理中，1=成功，2=失败，3=已关闭',
+  `external_txn_id`  VARCHAR(64)            DEFAULT NULL   COMMENT '第三方支付流水号（回调幂等）',
+  `fail_reason`      VARCHAR(255)           DEFAULT NULL   COMMENT '失败或关闭原因',
+  `paid_at`          DATETIME               DEFAULT NULL   COMMENT '支付成功时间',
+  `success_order_id` BIGINT      GENERATED ALWAYS AS
+                                 (IF(`status` = 1, `order_id`, NULL)) STORED
+                                                            COMMENT '仅成功流水有值，用于一单一条成功流水',
+  `created_at`       DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at`       DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP
+                                           ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_pay_no` (`pay_no`),
+  UNIQUE KEY `uk_pay_request` (`request_id`),
+  UNIQUE KEY `uk_pay_external` (`external_txn_id`),
+  UNIQUE KEY `uk_pay_success_order` (`success_order_id`),
+  KEY `idx_pay_order` (`order_id`, `created_at`),
+  KEY `idx_pay_user` (`user_id`, `created_at`),
+  KEY `idx_pay_status` (`status`, `created_at`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '支付流水表（支付幂等与对账）';
+
+
+-- 13. 异步下单请求：Redis 预扣 + MQ 落库的持久状态
+DROP TABLE IF EXISTS `order_request`;
+CREATE TABLE `order_request` (
+  `id`                 BIGINT       NOT NULL AUTO_INCREMENT,
+  `request_id`         VARCHAR(64)  NOT NULL COMMENT '客户端幂等键',
+  `user_id`            BIGINT       NOT NULL COMMENT '下单用户',
+  `payload_json`       TEXT         NOT NULL COMMENT '下单参数快照',
+  `train_id`           BIGINT       NOT NULL,
+  `travel_date`        DATE         NOT NULL,
+  `seat_type`          TINYINT      NOT NULL,
+  `from_segment_index` INT          NOT NULL,
+  `to_segment_index`   INT          NOT NULL,
+  `passenger_count`    INT          NOT NULL,
+  `status`             TINYINT      NOT NULL DEFAULT 0
+                         COMMENT '0=已提交，1=已预扣排队，2=处理中，3=成功，4=失败',
+  `order_id`           BIGINT                DEFAULT NULL,
+  `order_no`           VARCHAR(32)           DEFAULT NULL,
+  `fail_reason`        VARCHAR(255)          DEFAULT NULL,
+  `created_at`         DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at`         DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP
+                                      ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_order_request` (`request_id`),
+  KEY `idx_order_request_user` (`user_id`, `created_at`),
+  KEY `idx_order_request_status` (`status`, `created_at`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '异步下单请求表';
+
+
+-- 14. 管理端操作日志（阶段 6 再接入）
 DROP TABLE IF EXISTS `admin_operation_log`;
 CREATE TABLE `admin_operation_log` (
   `id`         BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键',

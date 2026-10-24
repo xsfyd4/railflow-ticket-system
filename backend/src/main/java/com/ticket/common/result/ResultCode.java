@@ -37,6 +37,12 @@ public enum ResultCode {
     ORDER_ITEM_NOT_FOUND(2008, "订单明细不存在或不属于该订单"),
     ORDER_ITEM_ALREADY_REFUNDED(2009, "该张票已经退票"),
 
+    PAY_REQUEST_CONFLICT(2010, "该幂等键已被其他订单使用"),
+    PAY_PROCESSING(2011, "支付处理中，请稍后查询订单状态"),
+    PAY_FAILED(2012, "支付失败"),
+    PAY_CHANNEL_NOT_SUPPORTED(2013, "暂不支持该支付渠道"),
+    PAY_LOG_STATE_ERROR(2014, "支付流水状态异常，请联系管理员"),
+
     STATION_CODE_EXISTS(3001, "车站三字码已存在"),
     STATION_NOT_FOUND(3002, "车站不存在"),
     STATION_IN_USE(3003, "该车站已被车次使用，请改为禁用"),

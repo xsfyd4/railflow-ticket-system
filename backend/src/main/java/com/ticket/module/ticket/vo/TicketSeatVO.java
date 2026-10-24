@@ -9,6 +9,9 @@ public class TicketSeatVO {
     private Integer remainCount;
     private BigDecimal price;
 
+    public TicketSeatVO() {
+    }
+
     public TicketSeatVO(Integer seatType, Integer remainCount, BigDecimal price) {
         this.seatType = seatType;
         this.remainCount = remainCount;

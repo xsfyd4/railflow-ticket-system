@@ -20,8 +20,8 @@ spring:
     username: root
     password: REMOVED_SECRET
     hikari:
-      maximum-pool-size: 10      # 最多同时开 10 个连接
-      minimum-idle: 2            # 空闲时保留 2 个
+      maximum-pool-size: 20      # 压测确认 10 个连接会形成明显队列，先对照调整为 20
+      minimum-idle: 5            # 空闲时保留 5 个
       connection-timeout: 5000   # 5 秒连不上就报错，别一直卡着
 
   # ----------------------------------------------------------
@@ -31,6 +31,7 @@ spring:
     redis:
       host: localhost
       port: 6379
+      client-type: jedis
       timeout: 3s                # 连不上就 3 秒报错，别把接口卡死
 
   # ----------------------------------------------------------
@@ -56,13 +57,16 @@ mybatis:
     map-underscore-to-camel-case: true
 
 logging:
-  level:
-    com.ticket: debug       # 只把自己写的包打成 debug，别让 Spring 的日志刷屏
+  config: classpath:logback-spring.xml
 
 # ------------------------------------------------------------
 #  JWT 配置（阶段 2 新增）
 # ------------------------------------------------------------
 ticket:
+  cache:
+    enabled: true
+    # 查票结果缓存时间。库存变化会通过版本号立即失效。
+    search-ttl-seconds: 10
   order:
     # 每分钟扫描一次过期待支付订单
     expire-scan-ms: 60000

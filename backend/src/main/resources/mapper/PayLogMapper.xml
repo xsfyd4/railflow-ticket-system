@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<!--
+  支付流水表 pay_log 的 SQL 映射。
+
+  幂等依赖三个数据库唯一索引：
+    1. uk_pay_request(request_id)        —— 同一个幂等键只能生成一条流水；
+    2. uk_pay_external(external_txn_id)  —— 第三方支付流水号只能入账一次；
+    3. uk_pay_success_order(success_order_id)
+                                           —— 一个订单最多一条成功流水。
+-->
+<mapper namespace="com.ticket.module.order.mapper.PayLogMapper">
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id"
+            parameterType="com.ticket.module.order.entity.PayLog">
+        INSERT INTO pay_log
+            (pay_no, request_id, order_id, order_no, user_id,
+             amount, channel, status)
+        VALUES
+            (#{payNo}, #{requestId}, #{orderId}, #{orderNo}, #{userId},
+             #{amount}, #{channel}, #{status})
+    </insert>
+
+    <select id="findByRequestId"
+            resultType="com.ticket.module.order.entity.PayLog">
+        SELECT id, pay_no, request_id, order_id, order_no, user_id,
+               amount, channel, status, external_txn_id, fail_reason,
+               paid_at, created_at, updated_at
+        FROM pay_log
+        WHERE request_id = #{requestId}
+        LIMIT 1
+    </select>
+
+    <select id="findSuccessByOrderId"
+            resultType="com.ticket.module.order.entity.PayLog">
+        SELECT id, pay_no, request_id, order_id, order_no, user_id,
+               amount, channel, status, external_txn_id, fail_reason,
+               paid_at, created_at, updated_at
+        FROM pay_log
+        WHERE order_id = #{orderId}
+          AND status = 1
+        LIMIT 1
+    </select>
+
+    <select id="findByOrderNoAndUser"
+            resultType="com.ticket.module.order.vo.PayLogVO">
+        SELECT pay_no, order_no, amount, channel, status,
+               external_txn_id, fail_reason, paid_at, created_at
+        FROM pay_log
+        WHERE order_no = #{orderNo}
+          AND user_id = #{userId}
+        ORDER BY id DESC
+    </select>
+
+    <update id="markSuccess">
+        UPDATE pay_log
+        SET status          = 1,
+            external_txn_id = #{externalTxnId},
+            paid_at         = #{paidAt}
+        WHERE id = #{id}
+          AND status = 0
+    </update>
+
+    <update id="finishWithoutPayment">
+        UPDATE pay_log
+        SET status      = #{status},
+            fail_reason = #{reason}
+        WHERE id = #{id}
+          AND status = 0
+    </update>
+
+</mapper>

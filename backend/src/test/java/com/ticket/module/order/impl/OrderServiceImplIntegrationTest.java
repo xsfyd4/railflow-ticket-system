@@ -171,6 +171,44 @@ class OrderServiceImplIntegrationTest {
     }
 
     @Test
+    void shouldAllowOnlyOneWinnerAmongManyConcurrentOrders()
+            throws Exception {
+        prepareStock(1);
+        List<UserPassenger> users = new java.util.ArrayList<>();
+        for (int i = 0; i < 16; i++) {
+            String suffix = String.format("%02d", i);
+            users.add(createUserAndPassenger(
+                    "load_order_test_" + suffix,
+                    String.format("11010119900101%04d", 2000 + i)));
+        }
+
+        ExecutorService pool = Executors.newFixedThreadPool(users.size());
+        CountDownLatch start = new CountDownLatch(1);
+        try {
+            List<Future<Boolean>> futures = users.stream()
+                    .map(user -> pool.submit(() -> placeOrder(user, start)))
+                    .toList();
+            start.countDown();
+
+            int successCount = 0;
+            for (Future<Boolean> future : futures) {
+                if (future.get(15, TimeUnit.SECONDS)) {
+                    successCount++;
+                }
+            }
+
+            assertEquals(1, successCount, "16 个并发请求只能有一个抢到票");
+            assertEquals(List.of(0, 0, 0, 0), remainingCounts());
+            assertEquals(1, count(
+                    "SELECT COUNT(*) FROM ticket_order WHERE travel_date = ?"
+                            + " AND train_id = ?",
+                    TEST_DATE, TRAIN_ID));
+        } finally {
+            pool.shutdownNow();
+        }
+    }
+
+    @Test
     void shouldNotExposeAnotherUsersOrder() {
         UserPassenger owner =
                 createUserAndPassenger(PRIMARY_USER, "110101199001011234");
@@ -211,9 +249,16 @@ class OrderServiceImplIntegrationTest {
                 "SELECT status FROM ticket_order WHERE order_no = ?",
                 order.getOrderNo()));
 
-        BizException error = assertThrows(BizException.class,
-                () -> orderService.pay(order.getOrderNo()));
-        assertEquals(2002, error.getCode());
+        /*
+         * 支付必须幂等：重复点击不能报错让用户以为没付成功，
+         * 也不能再扣一次钱，而是返回首次成功的同一个流水号。
+         */
+        OrderActionResultVO replay = orderService.pay(order.getOrderNo());
+        assertEquals(1, replay.getStatus());
+        assertEquals(result.getPayNo(), replay.getPayNo(),
+                "重复支付必须返回首次成功的流水号");
+        assertTrue(Boolean.TRUE.equals(replay.getIdempotentReplay()),
+                "第二次支付必须是幂等重放");
         assertEquals(List.of(9, 9, 9, 9), remainingCounts(),
                 "支付不会再次修改库存");
     }
@@ -631,33 +676,40 @@ class OrderServiceImplIntegrationTest {
     }
 
     private void cleanup() {
+        // 支付流水先删：它引用订单和用户，但表之间没有物理外键。
+        jdbcTemplate.update("""
+                DELETE FROM pay_log
+                WHERE user_id IN (
+                    SELECT id FROM sys_user
+                    WHERE username IN (?, ?)
+                )
+                """, PRIMARY_USER, SECOND_USER);
         jdbcTemplate.update("""
                 DELETE FROM ticket_order_item
                 WHERE order_id IN (
                     SELECT id FROM ticket_order
                     WHERE user_id IN (
                         SELECT id FROM sys_user
-                        WHERE username IN (?, ?)
+                        WHERE username LIKE '%order_test%'
                     )
                 )
-                """, PRIMARY_USER, SECOND_USER);
+                """);
         jdbcTemplate.update("""
                 DELETE FROM ticket_order
                 WHERE user_id IN (
                     SELECT id FROM sys_user
-                    WHERE username IN (?, ?)
+                    WHERE username LIKE '%order_test%'
                 )
-                """, PRIMARY_USER, SECOND_USER);
+                """);
         jdbcTemplate.update("""
                 DELETE FROM passenger
                 WHERE user_id IN (
                     SELECT id FROM sys_user
-                    WHERE username IN (?, ?)
+                    WHERE username LIKE '%order_test%'
                 )
-                """, PRIMARY_USER, SECOND_USER);
+                """);
         jdbcTemplate.update(
-                "DELETE FROM sys_user WHERE username IN (?, ?)",
-                PRIMARY_USER, SECOND_USER);
+                "DELETE FROM sys_user WHERE username LIKE '%order_test%'");
         jdbcTemplate.update("""
                 DELETE FROM ticket_stock
                 WHERE travel_date = ?

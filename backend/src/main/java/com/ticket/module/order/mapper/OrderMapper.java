@@ -66,6 +66,11 @@ public interface OrderMapper {
             @Param("orderNo") String orderNo,
             @Param("userId") Long userId);
 
+    /** 普通读取订单（不加锁），用于支付流水建账前的归属校验。 */
+    TicketOrder findByOrderNoAndUser(
+            @Param("orderNo") String orderNo,
+            @Param("userId") Long userId);
+
     /** 只有待支付订单才能改成已支付。 */
     int markPaid(@Param("id") Long id,
                  @Param("paidAt") LocalDateTime paidAt);

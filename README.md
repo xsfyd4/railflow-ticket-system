@@ -60,12 +60,27 @@
 - [01 · 项目结构设计](docs/01-项目结构设计.md)
 - [02 · 数据库设计](docs/02-数据库设计.md)
 - [08 · 项目开发日志](docs/08-项目开发日志.md)
+- [09 · 压测与并发测试报告](docs/09-压测报告.md)
+- [分类工作日志](docs/logs/README.md)
 - 建表 SQL：[sql/01-schema.sql](sql/01-schema.sql)
 - 演示数据：[sql/02-init-data.sql](sql/02-init-data.sql)
 
 ## 快速开始（建库）
 
+全新数据库只需要执行前两个文件：
+
 ```bash
 mysql -u root -p < sql/01-schema.sql
 mysql -u root -p < sql/02-init-data.sql
 ```
+
+可选的大规模演示数据：
+
+```bash
+mysql -u root -p < sql/03-demo-data-large.sql
+```
+
+`01-schema.sql` 已经包含 `pay_log`。`04-pay-log.sql` 只用于已经按旧版
+`01-schema.sql` 建过库、又不想重建数据库的增量迁移，全新安装不需要单独执行。
+
+`pay_log` 是运行时交易流水，不做演示初始化。只有用户发起真实或模拟支付后才会产生记录。

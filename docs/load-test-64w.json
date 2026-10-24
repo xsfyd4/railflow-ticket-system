@@ -1,0 +1,24 @@
+{
+  "timestamp": "2026-10-24T16:27:22+0800",
+  "target": "http://localhost:8080/api/user/tickets/search?fromStationId=1&toStationId=27&travelDate=2026-10-24&page=1&size=10",
+  "workers": 64,
+  "configuredDurationSeconds": 10.0,
+  "actualDurationSeconds": 10.01,
+  "warmupRequests": 20,
+  "totalRequests": 25578,
+  "successfulRequests": 25578,
+  "failedRequests": 0,
+  "errorCount": 0,
+  "qps": 2555.18,
+  "latencyMs": {
+    "avg": 24.99,
+    "p50": 23.55,
+    "p95": 47.81,
+    "p99": 66.71,
+    "max": 185.84
+  },
+  "businessCodes": {
+    "http=200,biz=200": 25578
+  },
+  "sampleErrors": []
+}
