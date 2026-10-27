@@ -110,6 +110,9 @@
     </logger>
 
     <!-- RabbitMQ / AMQP 操作统一进入 mq.log。 -->
+    <logger name="com.ticket.mq" level="INFO" additivity="false">
+        <appender-ref ref="MQ_FILE"/>
+    </logger>
     <logger name="org.springframework.amqp" level="INFO" additivity="false">
         <appender-ref ref="MQ_FILE"/>
     </logger>

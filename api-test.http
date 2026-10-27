@@ -1259,3 +1259,52 @@ Content-Type: application/json
             "期望业务码 400，实际 " + response.body.code);
     });
 %}
+
+
+### ==========================================================
+### 阶段 8：Redis + RabbitMQ 异步下单
+### ==========================================================
+
+### 77. 提交异步下单请求
+### 先运行第 72 节创建乘车人，并确保该日期、车次、席别已经生成 ticket_stock。
+### Idempotency-Key 每次新下单使用新值；网络重试时必须复用同一个值。
+< {%
+    client.global.set("asyncTravelDate", "2099-08-01");
+    client.global.set("asyncRequestId", "async-" + Date.now());
+%}
+POST http://localhost:8080/api/user/orders/async
+Authorization: Bearer {{userToken}}
+Idempotency-Key: {{asyncRequestId}}
+Content-Type: application/json
+
+{
+  "trainId": 1,
+  "travelDate": "{{asyncTravelDate}}",
+  "fromStationId": 1,
+  "toStationId": 5,
+  "seatType": 3,
+  "passengerIds": [{{passengerId}}]
+}
+
+> {%
+    client.test("异步下单请求被接收", function () {
+        client.assert(response.body.code === 200,
+            "期望 200，实际 " + response.body.code + " / " + response.body.msg);
+        client.assert(response.body.data.requestId === client.global.get("asyncRequestId"),
+            "返回的 requestId 与幂等键不一致");
+    });
+%}
+
+
+### 78. 查询异步下单结果
+GET http://localhost:8080/api/user/orders/async/{{asyncRequestId}}
+Authorization: Bearer {{userToken}}
+
+> {%
+    client.test("能够查询异步下单状态", function () {
+        client.assert(response.body.code === 200,
+            "期望 200，实际 " + response.body.code + " / " + response.body.msg);
+        client.assert(response.body.data.status >= 0 &&
+            response.body.data.status <= 4, "状态码非法");
+    });
+%}

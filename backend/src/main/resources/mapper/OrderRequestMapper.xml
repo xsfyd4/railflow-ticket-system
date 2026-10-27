@@ -1,0 +1,117 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.ticket.module.order.mapper.OrderRequestMapper">
+
+    <sql id="columns">
+        id, request_id, user_id, payload_json,
+        train_id, travel_date, seat_type,
+        from_segment_index, to_segment_index, passenger_count,
+        status, stock_reserved, published_at,
+        order_id, order_no, fail_reason,
+        created_at, updated_at
+    </sql>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO order_request
+            (request_id, user_id, payload_json,
+             train_id, travel_date, seat_type,
+             from_segment_index, to_segment_index, passenger_count,
+             status, stock_reserved)
+        VALUES
+            (#{requestId}, #{userId}, #{payloadJson},
+             #{trainId}, #{travelDate}, #{seatType},
+             #{fromSegmentIndex}, #{toSegmentIndex}, #{passengerCount},
+             #{status}, #{stockReserved})
+    </insert>
+
+    <select id="findByRequestId"
+            resultType="com.ticket.module.order.entity.OrderRequest">
+        SELECT <include refid="columns"/>
+        FROM order_request
+        WHERE request_id = #{requestId}
+    </select>
+
+    <select id="findByRequestIdAndUserId"
+            resultType="com.ticket.module.order.entity.OrderRequest">
+        SELECT <include refid="columns"/>
+        FROM order_request
+        WHERE request_id = #{requestId}
+          AND user_id = #{userId}
+    </select>
+
+    <select id="findByRequestIdForUpdate"
+            resultType="com.ticket.module.order.entity.OrderRequest">
+        SELECT <include refid="columns"/>
+        FROM order_request
+        WHERE request_id = #{requestId}
+        FOR UPDATE
+    </select>
+
+    <update id="markQueued">
+        UPDATE order_request
+        SET status = 1,
+            stock_reserved = 1,
+            fail_reason = NULL
+        WHERE request_id = #{requestId}
+          AND status = 0
+    </update>
+
+    <update id="markProcessing">
+        UPDATE order_request
+        SET status = 2,
+            fail_reason = NULL
+        WHERE request_id = #{requestId}
+          AND status IN (1, 2)
+    </update>
+
+    <update id="markPublished">
+        UPDATE order_request
+        SET published_at = #{publishedAt}
+        WHERE request_id = #{requestId}
+          AND status IN (1, 2)
+          AND published_at IS NULL
+    </update>
+
+    <update id="markSuccess">
+        UPDATE order_request
+        SET status = 3,
+            order_id = #{orderId},
+            order_no = #{orderNo},
+            fail_reason = NULL
+        WHERE request_id = #{requestId}
+          AND status IN (1, 2)
+    </update>
+
+    <update id="markFailed">
+        UPDATE order_request
+        SET status = 4,
+            fail_reason = LEFT(#{failReason}, 255)
+        WHERE request_id = #{requestId}
+          AND status IN (0, 1, 2)
+    </update>
+
+    <select id="findUnpublishedQueued"
+            resultType="com.ticket.module.order.entity.OrderRequest">
+        SELECT <include refid="columns"/>
+        FROM order_request
+        WHERE status = 1
+          AND stock_reserved = 1
+          AND published_at IS NULL
+          AND updated_at &lt; #{updatedBefore}
+        ORDER BY id
+        LIMIT #{limit}
+    </select>
+
+    <select id="findStaleActive"
+            resultType="com.ticket.module.order.entity.OrderRequest">
+        SELECT <include refid="columns"/>
+        FROM order_request
+        WHERE status IN (0, 2)
+          AND updated_at &lt; #{updatedBefore}
+        ORDER BY id
+        LIMIT #{limit}
+    </select>
+
+</mapper>

@@ -42,6 +42,11 @@ public enum ResultCode {
     PAY_FAILED(2012, "支付失败"),
     PAY_CHANNEL_NOT_SUPPORTED(2013, "暂不支持该支付渠道"),
     PAY_LOG_STATE_ERROR(2014, "支付流水状态异常，请联系管理员"),
+    ASYNC_REQUEST_NOT_FOUND(2015, "异步下单请求不存在"),
+    ASYNC_REQUEST_CONFLICT(2016, "该幂等键已用于另一次下单"),
+    ASYNC_REDIS_UNAVAILABLE(2017, "下单排队服务暂不可用，请稍后重试"),
+    ASYNC_MQ_UNAVAILABLE(2018, "下单队列暂不可用，请稍后重试"),
+    ORDER_IDEMPOTENCY_CONFLICT(2019, "该下单幂等键已被其他订单使用"),
 
     STATION_CODE_EXISTS(3001, "车站三字码已存在"),
     STATION_NOT_FOUND(3002, "车站不存在"),

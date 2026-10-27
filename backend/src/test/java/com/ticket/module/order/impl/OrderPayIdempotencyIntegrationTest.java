@@ -6,6 +6,7 @@ import com.ticket.module.order.dto.CreateOrderDTO;
 import com.ticket.module.order.vo.CreateOrderVO;
 import com.ticket.module.order.vo.OrderActionResultVO;
 import com.ticket.module.order.vo.PayLogVO;
+import com.ticket.module.stock.TicketStockCache;
 import com.ticket.security.LoginUser;
 import com.ticket.security.LoginUserContext;
 import org.junit.jupiter.api.AfterEach;
@@ -13,6 +14,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.time.LocalDate;
@@ -60,6 +62,12 @@ class OrderPayIdempotencyIntegrationTest {
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
+
+    @Autowired
+    private StringRedisTemplate redis;
+
+    @Autowired
+    private TicketStockCache stockCache;
 
     @BeforeEach
     void setUp() {
@@ -409,6 +417,12 @@ class OrderPayIdempotencyIntegrationTest {
                 DELETE FROM ticket_stock
                 WHERE travel_date = ? AND train_id = ?
                 """, TEST_DATE, TRAIN_ID);
+        List<String> stockKeys = new java.util.ArrayList<>();
+        for (int segment = 1; segment <= 4; segment++) {
+            stockKeys.add(stockCache.key(
+                    TEST_DATE, TRAIN_ID, SEAT_TYPE, segment));
+        }
+        redis.delete(stockKeys);
     }
 
     private record UserPassenger(Long userId, Long passengerId) {

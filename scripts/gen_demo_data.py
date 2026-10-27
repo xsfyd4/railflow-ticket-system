@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-生成演示数据：约 100 个车站 + 40 趟车（含停站、分段、票价）。
+生成国内演示数据：110 个车站 + 100 个车次（含停站、分段、票价和未来 30 天库存）。
 
 用法：
     python scripts/gen_demo_data.py
@@ -9,7 +9,7 @@
     sql/03-demo-data-large.sql
 
 为什么用脚本而不是手写 SQL：
-    40 趟车 × (8 个停站 + 7 个分段 + 21 条票价) ≈ 1500 行。
+    100 个车次 × 多站路线 × 3 种席别 × 30 天库存，手写不现实。
     手写不现实，而且改一个参数（比如速度）就要全部重算。
 
 数据的性质：
@@ -134,33 +134,103 @@ STATIONS = [
     ("昆明南", "昆明", "云南省", "kunmingnan", "kmn"),
     ("西安北", "西安", "陕西省", "xianbei", "xab"),
     ("兰州西", "兰州", "甘肃省", "lanzhouxi", "lzx"),
+    ("西宁", "西宁", "青海省", "xining", "xn"),
+    ("银川", "银川", "宁夏回族自治区", "yinchuan", "yc"),
+    ("乌鲁木齐", "乌鲁木齐", "新疆维吾尔自治区", "wulumuqi", "wlmq"),
+    ("拉萨", "拉萨", "西藏自治区", "lasa", "ls"),
+    ("香港西九龙", "香港", "香港特别行政区", "xianggangxijiulong", "xgxjl"),
+    ("张家口", "张家口", "河北省", "zhangjiakou", "zjk"),
+    ("承德南", "承德", "河北省", "chengdenan", "cdn"),
+    ("乌兰察布", "乌兰察布", "内蒙古自治区", "wulanchabu", "wlcb"),
 ]
 
-# 线路：(起点, 途经站, 终点)
+# 线路：(起点, 途经站, 终点)。共 50 条，每条生成早晚两个车次，合计 100 个车次。
 ROUTES = [
     ("北京南", ["济南西", "南京南", "苏州北"], "上海虹桥"),
     ("北京西", ["石家庄", "郑州东", "武汉", "长沙南"], "广州南"),
-    ("上海虹桥", [], "杭州东"),
-    ("北京南", [], "天津"),
-    ("广州南", [], "深圳北"),
-    ("北京西", ["郑州东"], "西安北"),
-    ("上海虹桥", ["南京南"], "合肥南"),
-    ("杭州东", [], "宁波"),
-    ("南京南", ["镇江", "常州北", "无锡东", "苏州北"], "上海虹桥"),
-    ("济南西", ["淄博北", "潍坊北"], "青岛北"),
-    ("武汉", ["岳阳东", "长沙南"], "广州南"),
+    ("上海虹桥", ["杭州东", "宁波", "温州南", "福州南", "厦门北", "惠州北"], "深圳北"),
+    ("北京南", ["天津", "唐山", "秦皇岛", "沈阳北", "长春"], "哈尔滨西"),
+    ("北京西", ["石家庄", "郑州东", "洛阳龙门"], "西安北"),
+    ("上海虹桥", ["南京南", "合肥南", "武汉", "宜昌东", "重庆北"], "成都东"),
+    ("广州南", ["佛山", "桂林北", "贵阳北"], "昆明南"),
     ("成都东", [], "重庆北"),
-    ("成都东", ["西安北"], "郑州东"),
-    ("深圳北", ["惠州北"], "厦门北"),
+    ("杭州东", ["绍兴北", "宁波", "温州南", "福州南"], "厦门北"),
     ("福州", ["莆田", "泉州"], "厦门北"),
+    ("深圳北", ["惠州北"], "厦门北"),
     ("南昌西", ["九江"], "武汉"),
     ("合肥南", [], "南京南"),
-    ("天津", ["唐山", "秦皇岛"], "沈阳北"),
+    ("济南西", ["淄博北", "潍坊北"], "青岛北"),
+    ("天津", ["唐山", "秦皇岛", "锦州南"], "沈阳北"),
     ("西安北", ["洛阳龙门"], "郑州东"),
     ("长沙南", ["衡阳东"], "广州南"),
+    ("武汉", ["岳阳东"], "长沙南"),
+    ("郑州东", [], "武汉"),
+    ("太原南", ["石家庄"], "北京西"),
+    ("呼和浩特东", ["乌兰察布", "张家口"], "北京"),
+    ("沈阳北", [], "大连北"),
+    ("西宁", [], "拉萨"),
+    ("乌鲁木齐", ["西宁"], "兰州西"),
+    ("兰州西", [], "西安北"),
+    ("昆明南", [], "贵阳北"),
+    ("南宁东", ["柳州", "桂林北"], "广州南"),
+    ("海口东", ["湛江西"], "广州南"),
+    ("青岛北", ["潍坊北", "济南西", "徐州东", "南京南", "苏州北"], "上海虹桥"),
+    ("银川", [], "西安北"),
+    ("上海", ["苏州", "无锡东", "常州北", "镇江"], "南京"),
+    ("南京", ["镇江"], "杭州东"),
+    ("杭州东", [], "宁波"),
+    ("宁波", [], "温州南"),
+    ("厦门北", ["厦门", "惠州北"], "广州南"),
+    ("南昌西", [], "长沙南"),
+    ("郑州东", ["洛阳龙门"], "西安北"),
+    ("石家庄", [], "太原南"),
+    ("北京", ["天津", "唐山", "秦皇岛", "沈阳北", "长春"], "哈尔滨"),
+    ("上海", ["南京", "合肥", "武汉", "宜昌东", "重庆北"], "成都东"),
+    ("广州", ["长沙", "武汉", "重庆北"], "成都东"),
+    ("西安北", [], "兰州西"),
+    ("成都东", ["贵阳北"], "昆明南"),
+    ("福州", ["莆田", "泉州", "厦门北", "惠州北"], "深圳北"),
+    ("北京西", ["石家庄", "郑州东"], "武汉"),
+    ("郑州东", ["武汉", "长沙南", "衡阳东"], "广州南"),
+    ("济南", ["泰安", "徐州东", "南京", "苏州"], "上海"),
+    ("沈阳北", ["锦州南", "秦皇岛", "天津", "济南西", "南京南", "苏州北"], "上海虹桥"),
+    ("北京西", ["石家庄", "郑州东", "武汉", "长沙南", "衡阳东"], "广州南"),
+    ("上海", ["南京", "合肥", "武汉", "宜昌东", "重庆北"], "成都东"),
 ]
 
-SEAT_TYPES = [(1, 3.0), (2, 1.6), (3, 1.0)]  # (席别, 相对二等座的倍数)
+SEAT_TYPES = [1, 2, 3]
+
+# 50 条线路对应的车型。每条线路生成 2 个车次：
+# G=60、D=12、K=16、T=8、Z=4，合计 100。
+ROUTE_TYPES = (
+    ["G"] * 22
+    + ["K"] * 2
+    + ["G"] * 8
+    + ["D"] * 6
+    + ["K"] * 6
+    + ["T"] * 4
+    + ["Z"] * 2
+)
+
+TYPE_CONFIG = {
+    "G": {"speed": 280, "dwell": 3, "start_hour": 6,
+          "rates": {1: 1.45, 2: 0.75, 3: 0.46},
+          "capacity": {1: 20, 2: 100, 3: 600}},
+    "D": {"speed": 210, "dwell": 4, "start_hour": 7,
+          "rates": {1: 0.95, 2: 0.50, 3: 0.32},
+          "capacity": {1: 16, 2: 80, 3: 500}},
+    "K": {"speed": 100, "dwell": 8, "start_hour": 18,
+          "rates": {1: 0.55, 2: 0.28, 3: 0.15},
+          "capacity": {1: 8, 2: 40, 3: 300}},
+    "T": {"speed": 120, "dwell": 6, "start_hour": 12,
+          "rates": {1: 0.65, 2: 0.32, 3: 0.18},
+          "capacity": {1: 8, 2: 48, 3: 360}},
+    "Z": {"speed": 110, "dwell": 7, "start_hour": 20,
+          "rates": {1: 0.70, 2: 0.35, 3: 0.19},
+          "capacity": {1: 8, 2: 48, 3: 360}},
+}
+
+PASSWORD_HASH = "$2a$10$Ry20fB3VNReeAEMu3UjEQOjMtzlc4Mz.WooSKHXjZhSeo7gGx9Fa2"
 
 
 def distance(a, b):
@@ -226,25 +296,32 @@ def build():
     train_id = 0
     stop_id = 0
     seg_id = 0
-    no_seq = 1001
+    number_seq = {"G": 1001, "D": 2001, "K": 3001, "T": 4001, "Z": 5001}
 
-    for start, mids, end in ROUTES:
+    for route_index, (start, mids, end) in enumerate(ROUTES):
         path = [start] + mids + [end]
+        train_type = ROUTE_TYPES[route_index]
+        config = TYPE_CONFIG[train_type]
+
         # 每条线路两趟车：一趟早上、一趟下午
         for variant in range(2):
             train_id += 1
-            train_no = "G%d" % no_seq
-            no_seq += 2
+            train_no = "%s%d" % (train_type, number_seq[train_type])
+            number_seq[train_type] += 1
 
-            depart = datetime(2026, 1, 1, 6 + variant * 6 + (train_id % 3), (train_id * 17) % 60)
-            speed = 280.0
+            hour = (config["start_hour"] + (route_index * 3) % 12 + variant * 6) % 24
+            depart = datetime(2026, 1, 1, hour, (train_id * 17) % 60)
+            speed = float(config["speed"])
+            dwell = config["dwell"]
             t = depart
             cum = 0.0
             total_mileage = sum(distance(path[i], path[i + 1]) for i in range(len(path) - 1))
 
-            train_rows.append("(%d, '%s', 'G', %d, %d, %.1f, 1, '演示车次')" %
-                              (train_id, train_no, name_to_id[start],
-                               name_to_id[end], total_mileage))
+            remark = "国内演示车次 · %s → %s" % (start, end)
+            train_rows.append(
+                "(%d, '%s', '%s', %d, %d, %.1f, 1, '%s')" %
+                (train_id, train_no, train_type, name_to_id[start],
+                 name_to_id[end], total_mileage, remark))
 
             for idx, st_name in enumerate(path):
                 stop_id += 1
@@ -262,7 +339,7 @@ def build():
                 else:
                     dep_off = arr_off
                     if idx > 0:
-                        t = t + timedelta(minutes=2)
+                        t = t + timedelta(minutes=dwell)
                     dep_time = t.time()
 
                 stop_rows.append("(%d, %d, %d, %d, %s, %s, %d, %.1f, %d, %d)" % (
@@ -283,10 +360,10 @@ def build():
                         seg_id, train_id, idx + 1, idx + 1, idx + 2,
                         name_to_id[st_name], name_to_id[path[idx + 1]], seg_mileage))
 
-                    base_price = seg_mileage * 0.45
-                    for seat_type, ratio in SEAT_TYPES:
+                    for seat_type in SEAT_TYPES:
+                        price = seg_mileage * config["rates"][seat_type]
                         price_rows.append("(%d, %d, %d, %.2f)" % (
-                            train_id, idx + 1, seat_type, money(base_price * ratio)))
+                            train_id, idx + 1, seat_type, money(price)))
 
     add("-- ========== 车次：%d 趟 ==========" % train_id)
     add("INSERT INTO `train` (`id`, `train_no`, `train_type`, `start_station_id`, "
@@ -313,19 +390,95 @@ def build():
         "`seat_type`, `price`) VALUES")
     add(",\n".join(price_rows) + ";")
     add("")
-    add("-- 提示：ticket_stock（库存）不在这里生成，")
-    add("-- 阶段 4 会写「按日期批量生成库存」的接口，用程序生成。")
 
-    return "\n".join(out) + "\n", train_id, len(stop_rows), len(seg_rows), len(price_rows)
+    # ---------------- 演示账号 ----------------
+    add("-- ========== 演示账号（统一密码：123456） ==========")
+    add(
+        "INSERT INTO `sys_admin` (`username`, `password`, `real_name`, `role`, `status`) "
+        "VALUES ('admin', '%s', '超级管理员', 'SUPER', 1) "
+        "ON DUPLICATE KEY UPDATE `password` = VALUES(`password`), "
+        "`role` = 'SUPER', `status` = 1;" % PASSWORD_HASH)
+    add(
+        "INSERT INTO `sys_user` (`username`, `password`, `nickname`, `status`) VALUES "
+        "('zhangsan', '%s', '张三', 1), "
+        "('lisi', '%s', '李四', 1) "
+        "ON DUPLICATE KEY UPDATE `password` = VALUES(`password`), `status` = 1;"
+        % (PASSWORD_HASH, PASSWORD_HASH))
+    add(
+        "INSERT INTO `passenger` (`user_id`, `name`, `id_card_no`, `passenger_type`) "
+        "SELECT u.id, '张三', '110101199001010011', 1 FROM `sys_user` u "
+        "WHERE u.username = 'zhangsan' "
+        "ON DUPLICATE KEY UPDATE `name` = VALUES(`name`), `passenger_type` = 1;")
+    add(
+        "INSERT INTO `passenger` (`user_id`, `name`, `id_card_no`, `passenger_type`) "
+        "SELECT u.id, '李四', '110101199001010029', 1 FROM `sys_user` u "
+        "WHERE u.username = 'lisi' "
+        "ON DUPLICATE KEY UPDATE `name` = VALUES(`name`), `passenger_type` = 1;")
+    add("")
+
+    # ---------------- 未来 30 天库存 ----------------
+    day_rows = ["SELECT %d AS day_no" % i for i in range(30)]
+    add("-- ========== 未来 30 天分段库存 ==========")
+    add(
+        "INSERT INTO `ticket_stock` "
+        "(`travel_date`, `train_id`, `segment_index`, `seat_type`, "
+        "`from_station_id`, `to_station_id`, "
+        "`total_count`, `sold_count`, `remaining_count`)")
+    add("SELECT x.travel_date, x.train_id, x.segment_index, x.seat_type,")
+    add("       x.from_station_id, x.to_station_id, x.total_count,")
+    add("       LEAST(x.total_count, MOD(x.train_id * 7 + x.segment_index * 3")
+    add("                              + x.day_no + x.seat_type * 2, 19)) AS sold_count,")
+    add("       x.total_count - LEAST(x.total_count,")
+    add("           MOD(x.train_id * 7 + x.segment_index * 3")
+    add("               + x.day_no + x.seat_type * 2, 19)) AS remaining_count")
+    add("FROM (")
+    add("    SELECT DATE_ADD(CURDATE(), INTERVAL (1 + days.day_no) DAY) AS travel_date,")
+    add("           seg.train_id, seg.segment_index, seats.seat_type,")
+    add("           seg.from_station_id, seg.to_station_id, days.day_no,")
+    add("           CASE t.train_type")
+    add("             WHEN 'G' THEN CASE seats.seat_type WHEN 1 THEN 20 WHEN 2 THEN 100 ELSE 600 END")
+    add("             WHEN 'D' THEN CASE seats.seat_type WHEN 1 THEN 16 WHEN 2 THEN 80 ELSE 500 END")
+    add("             WHEN 'K' THEN CASE seats.seat_type WHEN 1 THEN 8 WHEN 2 THEN 40 ELSE 300 END")
+    add("             WHEN 'T' THEN CASE seats.seat_type WHEN 1 THEN 8 WHEN 2 THEN 48 ELSE 360 END")
+    add("             ELSE CASE seats.seat_type WHEN 1 THEN 8 WHEN 2 THEN 48 ELSE 360 END")
+    add("           END AS total_count")
+    add("    FROM `train_segment` seg")
+    add("    JOIN `train` t ON t.id = seg.train_id")
+    add("    CROSS JOIN (")
+    add("        " + "\n        UNION ALL ".join(day_rows))
+    add("    ) days")
+    add("    CROSS JOIN (")
+    add("        SELECT 1 AS seat_type")
+    add("        UNION ALL SELECT 2")
+    add("        UNION ALL SELECT 3")
+    add("    ) seats")
+    add(") x;")
+    add("")
+    add("-- 自检：")
+    add("-- SELECT COUNT(*) AS stations FROM station;")
+    add("-- SELECT COUNT(*) AS trains FROM train;")
+    add("-- SELECT COUNT(*) AS stocks FROM ticket_stock;")
+    add("-- SELECT DISTINCT travel_date FROM ticket_stock ORDER BY travel_date;")
+
+    stock_count = len(seg_rows) * len(SEAT_TYPES) * 30
+    return (
+        "\n".join(out) + "\n",
+        len(STATIONS),
+        train_id,
+        len(stop_rows),
+        len(seg_rows),
+        len(price_rows),
+        stock_count,
+    )
 
 
 def main():
-    sql, trains, stops, segs, prices = build()
+    sql, stations, trains, stops, segs, prices, stocks = build()
     with open(OUT, "w", encoding="utf-8", newline="\n") as f:
         f.write(sql)
     print("已生成：%s" % OUT)
-    print("车站 %d 个 / 车次 %d 趟 / 停站 %d 条 / 分段 %d 条 / 票价 %d 条" %
-          (len(STATIONS), trains, stops, segs, prices))
+    print("车站 %d 个 / 车次 %d 个 / 停站 %d 条 / 分段 %d 条 / 票价 %d 条 / 库存 %d 条" %
+          (stations, trains, stops, segs, prices, stocks))
 
 
 if __name__ == "__main__":

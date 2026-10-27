@@ -42,6 +42,14 @@ spring:
     port: 5672
     username: guest
     password: guest
+    listener:
+      simple:
+        # 每个消费者实例先开 2 个线程，忙时最多 8 个。
+        concurrency: 2
+        max-concurrency: 8
+        prefetch: 20
+        # 未捕获异常不能无限塞回原队列，否则会形成毒消息循环。
+        default-requeue-rejected: false
 
 # ------------------------------------------------------------
 #  MyBatis 配置
@@ -67,6 +75,10 @@ ticket:
     enabled: true
     # 查票结果缓存时间。库存变化会通过版本号立即失效。
     search-ttl-seconds: 10
+    # Redis 分段数字库存，用于异步下单原子预扣。
+    stock-enabled: true
+    # 车票日期后至少保留几天的数字库存，便于退票和排障。
+    stock-ttl-days-after-travel: 2
   order:
     # 每分钟扫描一次过期待支付订单
     expire-scan-ms: 60000
@@ -74,6 +86,17 @@ ticket:
     expire-initial-delay-ms: 30000
     # 每批最多处理 100 个订单，避免一次任务占用数据库太久
     expire-batch-size: 100
+    async:
+      # 消费者遇到数据库短暂异常时的总尝试次数。
+      max-attempts: 3
+      retry-backoff-ms: 100
+      # 状态 1 但还没投递成功的请求，由补偿任务重新投递。
+      republish-delay-seconds: 30
+      # 状态 0/2 卡死超过该时间就终止并释放预扣。
+      stale-minutes: 10
+      recovery-scan-ms: 30000
+      recovery-initial-delay-ms: 30000
+      recovery-batch-size: 100
   jwt:
     # 签名密钥。HS256 算法要求至少 32 字节（256 位），太短 jjwt 启动就报错。
     # ★ 真实项目里这个值必须放进环境变量，绝不能提交到 Git——

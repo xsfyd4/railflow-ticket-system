@@ -55,7 +55,25 @@ class TicketSearchMapperIntegrationTest {
         assertEquals("G1001", row.getTrainNo());
         assertEquals(7, row.getRemainCount(),
                 "G1001 第 3 段只剩 7 张，所以北京南到上海虹桥也只能卖 7 张");
-        assertEquals(301, row.getDurationMinutes());
+        Integer expectedDuration = jdbcTemplate.queryForObject("""
+                SELECT TIMESTAMPDIFF(
+                           MINUTE,
+                           TIMESTAMP(
+                               DATE_ADD(DATE('2000-01-01'),
+                                        INTERVAL depart.day_offset DAY),
+                               depart.departure_time),
+                           TIMESTAMP(
+                               DATE_ADD(DATE('2000-01-01'),
+                                        INTERVAL arrive.day_offset DAY),
+                               arrive.arrival_time))
+                FROM train_stop depart
+                JOIN train_stop arrive
+                  ON arrive.train_id = depart.train_id
+                 AND arrive.station_id = 27
+                WHERE depart.train_id = 1
+                  AND depart.station_id = 1
+                """, Integer.class);
+        assertEquals(expectedDuration, row.getDurationMinutes());
         assertTrue(row.getPrice().signum() > 0);
     }
 

@@ -6,6 +6,7 @@ import com.ticket.module.train.vo.TrainVO;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 
+import java.math.BigDecimal;
 import java.util.List;
 
 /**
@@ -72,6 +73,12 @@ public interface TrainMapper {
      */
     long countStocks(@Param("trainId") Long trainId);
 
+    Long findFirstStopStationId(@Param("trainId") Long trainId);
+
+    Long findLastStopStationId(@Param("trainId") Long trainId);
+
+    BigDecimal findLastStopMileage(@Param("trainId") Long trainId);
+
     /**
      * 只更新首尾站和总里程，其他字段不动。
      *
@@ -81,8 +88,8 @@ public interface TrainMapper {
     int updateStations(@Param("id") Long id,
                        @Param("startStationId") Long startStationId,
                        @Param("endStationId") Long endStationId,
-                       @Param("totalMileage") java.math.BigDecimal totalMileage);
+                       @Param("totalMileage") BigDecimal totalMileage);
 
     /** 所有启用状态的车次（生成库存时用） */
-    java.util.List<Train> findAllEnabled();
+    List<Train> findAllEnabled();
 }

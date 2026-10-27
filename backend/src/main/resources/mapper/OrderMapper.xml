@@ -58,26 +58,30 @@
 
     <insert id="insertOrder" useGeneratedKeys="true" keyProperty="id">
         INSERT INTO ticket_order
-            (order_no, user_id, train_id, train_no, travel_date,
+            (order_no, request_id, user_id, train_id, train_no, travel_date,
              from_station_id, to_station_id,
              from_segment_index, to_segment_index,
              seat_type, passenger_count, total_amount,
              status, expire_time)
         VALUES
-            (#{orderNo}, #{userId}, #{trainId}, #{trainNo}, #{travelDate},
+            (#{orderNo}, #{requestId}, #{userId}, #{trainId}, #{trainNo}, #{travelDate},
              #{fromStationId}, #{toStationId},
              #{fromSegmentIndex}, #{toSegmentIndex},
              #{seatType}, #{passengerCount}, #{totalAmount},
              #{status}, #{expireTime})
     </insert>
 
-    <insert id="insertItem" useGeneratedKeys="true" keyProperty="id">
+    <insert id="batchInsertItems">
         INSERT INTO ticket_order_item
             (order_id, passenger_id, passenger_name, id_card_no,
              seat_type, price, coach_no, seat_no, status)
         VALUES
-            (#{orderId}, #{passengerId}, #{passengerName}, #{idCardNo},
-             #{seatType}, #{price}, #{coachNo}, #{seatNo}, #{status})
+        <foreach collection="items" item="item" separator=",">
+            (#{item.orderId}, #{item.passengerId},
+             #{item.passengerName}, #{item.idCardNo},
+             #{item.seatType}, #{item.price},
+             #{item.coachNo}, #{item.seatNo}, #{item.status})
+        </foreach>
     </insert>
 
     <sql id="orderVoColumns">
@@ -157,7 +161,7 @@
     -->
     <select id="findByOrderNoAndUser"
             resultType="com.ticket.module.order.entity.TicketOrder">
-        SELECT id, order_no, user_id, train_id, train_no, travel_date,
+        SELECT id, order_no, request_id, user_id, train_id, train_no, travel_date,
                from_station_id, to_station_id,
                from_segment_index, to_segment_index,
                seat_type, passenger_count, total_amount,
@@ -170,9 +174,23 @@
         LIMIT 1
     </select>
 
+    <select id="findByRequestId"
+            resultType="com.ticket.module.order.entity.TicketOrder">
+        SELECT id, order_no, request_id, user_id, train_id, train_no, travel_date,
+               from_station_id, to_station_id,
+               from_segment_index, to_segment_index,
+               seat_type, passenger_count, total_amount,
+               status, expire_time, paid_at, cancelled_at,
+               refunded_count, refunded_amount, last_refunded_at,
+               created_at, updated_at
+        FROM ticket_order
+        WHERE request_id = #{requestId}
+        LIMIT 1
+    </select>
+
     <select id="findByOrderNoAndUserForUpdate"
             resultType="com.ticket.module.order.entity.TicketOrder">
-        SELECT id, order_no, user_id, train_id, train_no, travel_date,
+        SELECT id, order_no, request_id, user_id, train_id, train_no, travel_date,
                from_station_id, to_station_id,
                from_segment_index, to_segment_index,
                seat_type, passenger_count, total_amount,
@@ -230,7 +248,7 @@
 
     <select id="findByIdForUpdate"
             resultType="com.ticket.module.order.entity.TicketOrder">
-        SELECT id, order_no, user_id, train_id, train_no, travel_date,
+        SELECT id, order_no, request_id, user_id, train_id, train_no, travel_date,
                from_station_id, to_station_id,
                from_segment_index, to_segment_index,
                seat_type, passenger_count, total_amount,

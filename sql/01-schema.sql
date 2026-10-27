@@ -172,7 +172,8 @@ CREATE TABLE `train_segment_price` (
   `seat_type`     TINYINT       NOT NULL                COMMENT '席别：1=商务座，2=一等座，3=二等座',
   `price`         DECIMAL(10,2) NOT NULL                COMMENT '本段本席别票价（元）',
   PRIMARY KEY (`id`),
-  UNIQUE KEY `uk_price` (`train_id`, `segment_index`, `seat_type`)
+  UNIQUE KEY `uk_price` (`train_id`, `segment_index`, `seat_type`),
+  KEY `idx_price_query` (`train_id`, `seat_type`, `segment_index`)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '车次分段票价表';
 
 
@@ -217,6 +218,7 @@ DROP TABLE IF EXISTS `ticket_order`;
 CREATE TABLE `ticket_order` (
   `id`                 BIGINT        NOT NULL AUTO_INCREMENT COMMENT '主键',
   `order_no`           VARCHAR(32)   NOT NULL                COMMENT '业务订单号，如 202610101200001（唯一）',
+  `request_id`         VARCHAR(64)            DEFAULT NULL   COMMENT '同步下单幂等键（唯一，异步下单为空）',
   `user_id`            BIGINT        NOT NULL                COMMENT '下单账号 sys_user.id',
   `train_id`           BIGINT        NOT NULL                COMMENT '车次 train.id',
   `train_no`           VARCHAR(20)   NOT NULL                COMMENT '车次号（冗余，订单展示不再联表）',
@@ -240,6 +242,7 @@ CREATE TABLE `ticket_order` (
                                                  ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_order_no` (`order_no`),
+  UNIQUE KEY `uk_order_request` (`request_id`),
   KEY `idx_order_user` (`user_id`, `created_at`),
   KEY `idx_order_train` (`travel_date`, `train_id`),
   KEY `idx_order_status` (`status`, `created_at`),
@@ -319,6 +322,10 @@ CREATE TABLE `order_request` (
   `passenger_count`    INT          NOT NULL,
   `status`             TINYINT      NOT NULL DEFAULT 0
                          COMMENT '0=已提交，1=已预扣排队，2=处理中，3=成功，4=失败',
+  `stock_reserved`     TINYINT      NOT NULL DEFAULT 0
+                         COMMENT '是否已在 Redis 预扣库存：0=否，1=是',
+  `published_at`       DATETIME              DEFAULT NULL
+                         COMMENT '成功投递到 RabbitMQ 的时间',
   `order_id`           BIGINT                DEFAULT NULL,
   `order_no`           VARCHAR(32)           DEFAULT NULL,
   `fail_reason`        VARCHAR(255)          DEFAULT NULL,

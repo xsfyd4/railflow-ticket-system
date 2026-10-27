@@ -460,11 +460,11 @@
       <div class="eyebrow">Train Ticket · Data Model</div>
       <h1>数据库表关系图</h1>
       <p class="subtitle">
-        12 张表围绕“静态车次定义 → 每日分段库存 → 用户订单”组织。
+        14 张表围绕“静态车次定义 → 每日分段库存 → 订单与异步处理”组织。
         项目不使用物理外键，箭头表示应用层维护的逻辑关系。
       </p>
       <div class="meta-row" aria-label="数据模型摘要">
-        <span class="pill"><span class="dot" style="color:var(--travel)"></span>12 张表</span>
+        <span class="pill"><span class="dot" style="color:var(--travel)"></span>14 张表</span>
         <span class="pill"><span class="dot" style="color:var(--stock)"></span>N 站 = N-1 段</span>
         <span class="pill"><span class="dot" style="color:var(--order)"></span>子表关系使用逻辑外键</span>
       </div>
@@ -636,6 +636,24 @@
               <span class="desc">一位乘车人一张票；姓名与证件号保存为下单时快照。</span>
               <span class="keys">PK id · order_id · passenger_id · seat / price</span>
               <span class="relation">N : 1 ticket_order · logical → passenger</span>
+            </button>
+
+            <button type="button" class="table-card flow-target"
+                    data-table="pay_log" data-color="order" aria-pressed="false"
+                    data-related="ticket_order sys_user">
+              <span class="card-top"><code class="table-name">pay_log</code><span class="tag">支付流水</span></span>
+              <span class="desc">记录每次支付尝试；唯一索引保证同一订单最多一条成功流水。</span>
+              <span class="keys">UK request_id · UK external_txn_id · UK success_order_id</span>
+              <span class="relation">N : 1 ticket_order / sys_user</span>
+            </button>
+
+            <button type="button" class="table-card card-wide flow-target"
+                    data-table="order_request" data-color="order" aria-pressed="false"
+                    data-related="sys_user ticket_order train ticket_stock">
+              <span class="card-top"><code class="table-name">order_request</code><span class="tag">异步请求</span></span>
+              <span class="desc">保存幂等键、参数快照、Redis 预扣标记、MQ 投递时间和最终订单。</span>
+              <span class="keys">UK request_id · status · stock_reserved · published_at</span>
+              <span class="relation">N : 1 sys_user / train · logical → ticket_order</span>
             </button>
           </div>
         </section>

@@ -46,7 +46,8 @@ public interface OrderMapper {
 
     int insertOrder(TicketOrder order);
 
-    int insertItem(TicketOrderItem item);
+    /** 一次 SQL 插入某订单的全部乘车人明细。 */
+    int batchInsertItems(@Param("items") List<TicketOrderItem> items);
 
     long countByUser(@Param("userId") Long userId,
                      @Param("status") Integer status);
@@ -70,6 +71,9 @@ public interface OrderMapper {
     TicketOrder findByOrderNoAndUser(
             @Param("orderNo") String orderNo,
             @Param("userId") Long userId);
+
+    /** 按同步下单幂等键查订单（不限制用户，便于识别幂等键被别的账号占用）。 */
+    TicketOrder findByRequestId(@Param("requestId") String requestId);
 
     /** 只有待支付订单才能改成已支付。 */
     int markPaid(@Param("id") Long id,

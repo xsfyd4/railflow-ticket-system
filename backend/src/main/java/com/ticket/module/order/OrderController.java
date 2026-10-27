@@ -6,6 +6,7 @@ import com.ticket.module.order.dto.CreateOrderDTO;
 import com.ticket.module.order.dto.OrderQueryDTO;
 import com.ticket.module.order.dto.PayOrderDTO;
 import com.ticket.module.order.dto.RefundOrderDTO;
+import com.ticket.module.order.impl.OrderCreateService;
 import com.ticket.module.order.vo.CreateOrderVO;
 import com.ticket.module.order.vo.OrderActionResultVO;
 import com.ticket.module.order.vo.OrderDetailVO;
@@ -31,17 +32,27 @@ import java.util.List;
 public class OrderController {
 
     private final OrderService orderService;
+    private final OrderCreateService orderCreateService;
 
-    public OrderController(OrderService orderService) {
+    public OrderController(OrderService orderService,
+                           OrderCreateService orderCreateService) {
         this.orderService = orderService;
+        this.orderCreateService = orderCreateService;
     }
 
     /**
-     * 只创建待支付订单，库存已经在本事务里被预占。
+     * 创建待支付订单，库存已经在本事务里被预占。
+     *
+     * <p>必须带 {@code Idempotency-Key}：同一 Key 重复提交只生成一张订单。
+     * 前端应在用户进入"确认订单"页时生成一个 UUID，提交和重试复用同一个值。
      */
     @PostMapping
-    public R<CreateOrderVO> create(@RequestBody @Valid CreateOrderDTO dto) {
-        return R.ok("下单成功", orderService.create(dto));
+    public R<CreateOrderVO> create(
+            @RequestHeader(value = "Idempotency-Key", required = false)
+            String idempotencyKey,
+            @RequestBody @Valid CreateOrderDTO dto) {
+        return R.ok("下单成功",
+                orderCreateService.submit(idempotencyKey, dto));
     }
 
     /** GET /api/user/orders?status=0&page=1&size=10 */

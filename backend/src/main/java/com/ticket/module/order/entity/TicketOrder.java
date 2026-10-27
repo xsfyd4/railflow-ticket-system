@@ -11,6 +11,8 @@ public class TicketOrder {
 
     private Long id;
     private String orderNo;
+    /** 同步下单幂等键；异步下单创建的订单为空。 */
+    private String requestId;
     private Long userId;
     private Long trainId;
     private String trainNo;
@@ -46,6 +48,14 @@ public class TicketOrder {
 
     public void setOrderNo(String orderNo) {
         this.orderNo = orderNo;
+    }
+
+    public String getRequestId() {
+        return requestId;
+    }
+
+    public void setRequestId(String requestId) {
+        this.requestId = requestId;
     }
 
     public Long getUserId() {

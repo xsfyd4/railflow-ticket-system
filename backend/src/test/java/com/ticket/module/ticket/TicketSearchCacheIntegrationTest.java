@@ -2,6 +2,7 @@ package com.ticket.module.ticket;
 
 import com.ticket.common.result.PageResult;
 import com.ticket.module.stock.StockService;
+import com.ticket.module.stock.TicketStockCache;
 import com.ticket.module.stock.dto.StockAdjustDTO;
 import com.ticket.module.ticket.dto.TicketSearchDTO;
 import com.ticket.module.ticket.vo.TicketSeatVO;
@@ -37,6 +38,9 @@ class TicketSearchCacheIntegrationTest {
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
+
+    @Autowired
+    private TicketStockCache stockCache;
 
     @BeforeEach
     void setUp() {
@@ -115,5 +119,10 @@ class TicketSearchCacheIntegrationTest {
         if (keys != null && !keys.isEmpty()) {
             redis.delete(keys);
         }
+        List<String> stockKeys = new java.util.ArrayList<>();
+        for (int segment = 1; segment <= 4; segment++) {
+            stockKeys.add(stockCache.key(TEST_DATE, 1L, 3, segment));
+        }
+        redis.delete(stockKeys);
     }
 }

@@ -5,6 +5,7 @@ import com.ticket.common.result.PageResult;
 import com.ticket.common.result.ResultCode;
 import com.ticket.module.station.entity.Station;
 import com.ticket.module.station.mapper.StationMapper;
+import com.ticket.module.stock.TicketStockCache;
 import com.ticket.module.train.TrainService;
 import com.ticket.module.train.dto.TrainQueryDTO;
 import com.ticket.module.train.dto.TrainSaveDTO;
@@ -13,10 +14,10 @@ import com.ticket.module.train.mapper.TrainMapper;
 import com.ticket.module.train.vo.TrainVO;
 import com.ticket.module.ticket.TicketCacheInvalidator;
 import org.springframework.stereotype.Service;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.transaction.annotation.Transactional;
-import org.yaml.snakeyaml.constructor.DuplicateKeyException;
 
-import java.util.DuplicateFormatFlagsException;
+import java.math.BigDecimal;
 import java.util.List;
 
 /**
@@ -39,13 +40,16 @@ public class TrainServiceImpl implements TrainService {
     private final TrainMapper trainMapper;
     private final StationMapper stationMapper;
     private final TicketCacheInvalidator cacheInvalidator;
+    private final TicketStockCache stockCache;
 
     public TrainServiceImpl(TrainMapper trainMapper,
                             StationMapper stationMapper,
-                            TicketCacheInvalidator cacheInvalidator) {
+                            TicketCacheInvalidator cacheInvalidator,
+                            TicketStockCache stockCache) {
         this.trainMapper = trainMapper;
         this.stationMapper = stationMapper;
         this.cacheInvalidator = cacheInvalidator;
+        this.stockCache = stockCache;
     }
 
     @Override
@@ -63,9 +67,9 @@ public class TrainServiceImpl implements TrainService {
         }
         query.setSize(size);
         query.setPage(page);
-        int offest=(page-1)*10;
+        int offset=(page-1)*size;
         long total=trainMapper.countByQuery(query);
-        List<TrainVO> records=trainMapper.findPage(query,offest);
+        List<TrainVO> records=trainMapper.findPage(query,offset);
         return  PageResult.of(total, page, size, records);
 
     }
@@ -83,6 +87,7 @@ public class TrainServiceImpl implements TrainService {
     }
 
     @Override
+    @Transactional(rollbackFor = Exception.class)
     public Long create(TrainSaveDTO dto) {
         // TODO
         // 提示：
@@ -115,6 +120,7 @@ public class TrainServiceImpl implements TrainService {
     }
 
     @Override
+    @Transactional(rollbackFor = Exception.class)
     public void update(Long id, TrainSaveDTO dto) {
         // TODO
         // 提示：和车站的 update 一样——先查存在、再查重（排除自己）、改字段、update
@@ -126,6 +132,28 @@ public class TrainServiceImpl implements TrainService {
         TrainVO existing = trainMapper.findById(id);
         if (existing == null) {
             throw new BizException(ResultCode.TRAIN_NOT_FOUND);
+        }
+        Long firstStopStationId =
+                trainMapper.findFirstStopStationId(id);
+        if (firstStopStationId != null) {
+            Long lastStopStationId =
+                    trainMapper.findLastStopStationId(id);
+            BigDecimal lastStopMileage =
+                    trainMapper.findLastStopMileage(id);
+            if (!dto.getStartStationId().equals(firstStopStationId)
+                    || !dto.getEndStationId().equals(lastStopStationId)) {
+                throw new BizException(400,
+                        "该车次已有停站，始发站和终到站必须与停站首尾一致");
+            }
+            if (dto.getTotalMileage() != null
+                    && (lastStopMileage == null
+                    || dto.getTotalMileage().compareTo(lastStopMileage) != 0)) {
+                throw new BizException(400,
+                        "该车次已有停站，总里程必须与终点累计里程一致");
+            }
+            if (dto.getTotalMileage() == null) {
+                dto.setTotalMileage(lastStopMileage);
+            }
         }
         if (!existing.getTrainNo().equals(dto.getTrainNo())
                 && trainMapper.findByTrainNo(dto.getTrainNo()) != null) {
@@ -148,6 +176,21 @@ public class TrainServiceImpl implements TrainService {
         }
         cacheInvalidator.invalidateAllAfterCommit();
 
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void clearStocksForReconfiguration(Long id) {
+        TrainVO train = trainMapper.findById(id);
+        if (train == null) {
+            throw new BizException(ResultCode.TRAIN_NOT_FOUND);
+        }
+        if (trainMapper.countOrders(id) > 0) {
+            throw new BizException(ResultCode.TRAIN_IN_USE);
+        }
+        trainMapper.deleteStocksByTrainId(id);
+        cacheInvalidator.invalidateAllAfterCommit();
+        stockCache.evictTrainAfterCommit(id);
     }
 
     @Override

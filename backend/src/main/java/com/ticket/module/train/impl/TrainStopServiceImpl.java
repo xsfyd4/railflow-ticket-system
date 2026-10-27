@@ -86,8 +86,13 @@ public class TrainStopServiceImpl implements TrainStopService {
         }
 
         // 3. 有库存就禁止改停站（改了 segment_index，库存就对不上了）
+        if (trainMapper.countOrders(trainId) > 0) {
+            throw new BizException(400,
+                    "该车次已有订单，不能直接修改停站；请新建车次版本");
+        }
         if (trainMapper.countStocks(trainId) > 0) {
-            throw new BizException(400, "该车次已生成库存，请先清理库存后再修改停站");
+            throw new BizException(400,
+                    "该车次已生成库存，请先清空库存后再修改停站");
         }
 
         // 4. 删旧数据（票 → 段 → 站）

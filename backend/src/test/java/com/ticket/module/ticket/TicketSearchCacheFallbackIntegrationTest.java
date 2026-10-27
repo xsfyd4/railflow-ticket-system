@@ -6,6 +6,8 @@ import com.ticket.module.ticket.vo.TicketVO;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 
@@ -19,17 +21,34 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
                 "spring.data.redis.timeout=300ms"
         }
 )
+@Transactional
 class TicketSearchCacheFallbackIntegrationTest {
 
     @Autowired
     private TicketService ticketService;
 
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
+
     @Test
     void shouldFallbackToMysqlWhenRedisIsUnavailable() {
+        LocalDate testDate = LocalDate.of(2099, 8, 1);
+        jdbcTemplate.update("""
+                INSERT INTO ticket_stock
+                    (travel_date, train_id, segment_index, seat_type,
+                     from_station_id, to_station_id,
+                     total_count, sold_count, remaining_count)
+                SELECT ?, seg.train_id, seg.segment_index, 3,
+                       seg.from_station_id, seg.to_station_id,
+                       10, 0, 10
+                FROM train_segment seg
+                WHERE seg.train_id = 1
+                """, testDate);
+
         TicketSearchDTO query = new TicketSearchDTO();
         query.setFromStationId(1L);
         query.setToStationId(27L);
-        query.setTravelDate(LocalDate.of(2026, 10, 24));
+        query.setTravelDate(testDate);
         query.setSeatType(3);
 
         PageResult<TicketVO> result = ticketService.search(query);

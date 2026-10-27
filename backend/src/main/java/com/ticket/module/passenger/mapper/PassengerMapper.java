@@ -15,6 +15,14 @@ public interface PassengerMapper {
     Passenger findByIdAndUserId(@Param("id") Long id,
                                 @Param("userId") Long userId);
 
+    /**
+     * 一次查询多个乘车人，并同时校验它们都属于当前用户。
+     * 下单时使用它替代 N 次单条查询。
+     */
+    List<Passenger> findByIdsAndUserId(
+            @Param("ids") List<Long> ids,
+            @Param("userId") Long userId);
+
     Passenger findByUserIdAndIdCardNo(@Param("userId") Long userId,
                                       @Param("idCardNo") String idCardNo);
 

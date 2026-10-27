@@ -4,6 +4,7 @@ import com.ticket.common.exception.BizException;
 import com.ticket.common.result.ResultCode;
 import com.ticket.module.order.entity.TicketOrder;
 import com.ticket.module.order.mapper.OrderMapper;
+import com.ticket.module.stock.TicketStockCache;
 import com.ticket.module.ticket.TicketCacheInvalidator;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -23,11 +24,14 @@ public class OrderExpireTxService {
 
     private final OrderMapper orderMapper;
     private final TicketCacheInvalidator cacheInvalidator;
+    private final TicketStockCache stockCache;
 
     public OrderExpireTxService(OrderMapper orderMapper,
-                                TicketCacheInvalidator cacheInvalidator) {
+                                TicketCacheInvalidator cacheInvalidator,
+                                TicketStockCache stockCache) {
         this.orderMapper = orderMapper;
         this.cacheInvalidator = cacheInvalidator;
+        this.stockCache = stockCache;
     }
 
     /**
@@ -64,6 +68,13 @@ public class OrderExpireTxService {
             throw new BizException(ResultCode.ORDER_STATUS_ERROR);
         }
         cacheInvalidator.invalidateDateAfterCommit(order.getTravelDate());
+        stockCache.incrementAfterCommit(
+                order.getTravelDate(),
+                order.getTrainId(),
+                order.getSeatType(),
+                order.getFromSegmentIndex(),
+                order.getToSegmentIndex(),
+                order.getPassengerCount());
         return true;
     }
 }

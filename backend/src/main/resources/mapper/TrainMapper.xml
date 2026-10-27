@@ -153,6 +153,30 @@
         SELECT COUNT(*) FROM ticket_stock WHERE train_id = #{trainId}
     </select>
 
+    <select id="findFirstStopStationId" resultType="long">
+        SELECT station_id
+        FROM train_stop
+        WHERE train_id = #{trainId}
+        ORDER BY stop_order
+        LIMIT 1
+    </select>
+
+    <select id="findLastStopStationId" resultType="long">
+        SELECT station_id
+        FROM train_stop
+        WHERE train_id = #{trainId}
+        ORDER BY stop_order DESC
+        LIMIT 1
+    </select>
+
+    <select id="findLastStopMileage" resultType="java.math.BigDecimal">
+        SELECT mileage
+        FROM train_stop
+        WHERE train_id = #{trainId}
+        ORDER BY stop_order DESC
+        LIMIT 1
+    </select>
+
     <!-- 改停站后同步首尾站和总里程（只更新这三列） -->
     <update id="updateStations">
         UPDATE train

@@ -24,6 +24,23 @@ public interface OrderService {
     /** 创建待支付订单，返回订单号和支付截止时间。 */
     CreateOrderVO create(CreateOrderDTO dto);
 
+    /**
+     * 带幂等键创建订单。
+     *
+     * <p>本方法本身是事务方法：幂等键通过 {@code ticket_order.request_id}
+     * 唯一索引落库。调用方不要在事务内捕获 DuplicateKeyException，
+     * 应在事务外层捕获并重放已有订单（见 OrderCreateService）。
+     */
+    CreateOrderVO createWithRequestId(CreateOrderDTO dto, String requestId);
+
+    /**
+     * 为指定用户创建订单。
+     *
+     * <p>只供 RabbitMQ 消费者在已持有 Redis 预扣的情况下使用。
+     * 普通 HTTP 下单必须走 {@link #create(CreateOrderDTO)}，否则会少做登录用户校验。
+     */
+    CreateOrderVO createForUser(Long userId, CreateOrderDTO dto);
+
     /** 查询当前用户的订单列表。 */
     PageResult<OrderVO> page(OrderQueryDTO query);
 

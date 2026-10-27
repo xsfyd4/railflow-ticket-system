@@ -2,6 +2,7 @@ package com.ticket.module.stock.impl;
 
 import com.ticket.common.exception.BizException;
 import com.ticket.module.stock.StockService;
+import com.ticket.module.stock.TicketStockCache;
 import com.ticket.module.stock.dto.StockAdjustDTO;
 import com.ticket.module.stock.dto.StockGenerateDTO;
 import com.ticket.module.stock.dto.StockQueryDTO;
@@ -37,15 +38,18 @@ public class StockServiceImpl implements StockService {
     private final TrainSegmentMapper segmentMapper;
     private final TicketStockMapper stockMapper;
     private final TicketCacheInvalidator cacheInvalidator;
+    private final TicketStockCache stockCache;
 
     public StockServiceImpl(TrainMapper trainMapper,
                             TrainSegmentMapper segmentMapper,
                             TicketStockMapper stockMapper,
-                            TicketCacheInvalidator cacheInvalidator) {
+                            TicketCacheInvalidator cacheInvalidator,
+                            TicketStockCache stockCache) {
         this.trainMapper = trainMapper;
         this.segmentMapper = segmentMapper;
         this.stockMapper = stockMapper;
         this.cacheInvalidator = cacheInvalidator;
+        this.stockCache = stockCache;
     }
 
     @Override
@@ -110,6 +114,12 @@ public class StockServiceImpl implements StockService {
         }
         stockMapper.updateRemaining(id, dto.getRemainingCount());
         cacheInvalidator.invalidateDateAfterCommit(stock.getTravelDate());
+        stockCache.refreshAfterCommit(
+                stock.getTravelDate(),
+                stock.getTrainId(),
+                stock.getSeatType(),
+                stock.getSegmentIndex(),
+                stock.getSegmentIndex());
     }
 
     /** 组装一条库存记录 */

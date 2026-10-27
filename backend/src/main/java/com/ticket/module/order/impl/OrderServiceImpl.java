@@ -23,6 +23,7 @@ import com.ticket.module.order.vo.PayLogVO;
 import com.ticket.module.order.vo.RefundResultVO;
 import com.ticket.module.passenger.entity.Passenger;
 import com.ticket.module.passenger.mapper.PassengerMapper;
+import com.ticket.module.stock.TicketStockCache;
 import com.ticket.module.ticket.TicketCacheInvalidator;
 import com.ticket.module.train.vo.TrainPriceVO;
 import com.ticket.security.LoginUser;
@@ -113,6 +114,9 @@ public class OrderServiceImpl implements OrderService {
     /** 订单改变库存后，在事务提交后失效查票缓存。 */
     private final TicketCacheInvalidator cacheInvalidator;
 
+    /** 同步 HTTP 下单成功后，把 Redis 数字库存同步减掉。 */
+    private final TicketStockCache stockCache;
+
     /**
      * 构造器注入。
      *
@@ -123,12 +127,14 @@ public class OrderServiceImpl implements OrderService {
                             PassengerMapper passengerMapper,
                             PayLogMapper payLogMapper,
                             OrderPayTxService payTxService,
-                            TicketCacheInvalidator cacheInvalidator) {
+                            TicketCacheInvalidator cacheInvalidator,
+                            TicketStockCache stockCache) {
         this.orderMapper = orderMapper;
         this.passengerMapper = passengerMapper;
         this.payLogMapper = payLogMapper;
         this.payTxService = payTxService;
         this.cacheInvalidator = cacheInvalidator;
+        this.stockCache = stockCache;
     }
 
     /**
@@ -140,9 +146,30 @@ public class OrderServiceImpl implements OrderService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public CreateOrderVO create(CreateOrderDTO dto) {
-        // 登录用户来自 JWT 拦截器写入的 ThreadLocal，绝不能直接相信请求体中的 userId。
-        Long userId = currentUserId();
+        return createInternal(currentUserId(), dto, true, null);
+    }
 
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public CreateOrderVO createWithRequestId(CreateOrderDTO dto,
+                                             String requestId) {
+        return createInternal(currentUserId(), dto, true, requestId);
+    }
+
+    /**
+     * MQ 消费者没有浏览器请求线程，因此不能从 ThreadLocal 取用户。
+     * 这里的 userId 来自已经持久化的 order_request，库存已在投递 MQ 前由 Redis 预扣。
+     */
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public CreateOrderVO createForUser(Long userId, CreateOrderDTO dto) {
+        return createInternal(userId, dto, false, null);
+    }
+
+    private CreateOrderVO createInternal(Long userId,
+                                         CreateOrderDTO dto,
+                                         boolean syncRedisStock,
+                                         String requestId) {
         // 同一车站无法形成一段旅程，提前拒绝可以避免后面出现 0 段或反向段。
         if (dto.getFromStationId().equals(dto.getToStationId())) {
             throw new BizException(400, "出发站和到达站不能相同");
@@ -159,19 +186,31 @@ public class OrderServiceImpl implements OrderService {
         }
 
         /*
-         * 第 1 步：校验乘车人。
+         * 第 1 步：一次校验全部乘车人。
          *
-         * 不能用 findById 单独查，因为那样用户可能伪造别人的乘车人 id。
-         * findByIdAndUserId 的 SQL 同时带上了 user_id，天然完成归属校验。
+         * SQL 的 WHERE 同时包含 user_id，因此即使有人伪造别人的乘车人 id，
+         * 查询结果也会少一条，随后被数量校验拒绝。最多 5 人，IN 查询足够轻量。
          */
-        List<Passenger> passengers = new ArrayList<>();
+        List<Passenger> foundPassengers =
+                passengerMapper.findByIdsAndUserId(
+                        dto.getPassengerIds(), userId);
+        if (foundPassengers.size() != dto.getPassengerIds().size()) {
+            throw new BizException(ResultCode.PASSENGER_NOT_FOUND);
+        }
+
+        // 恢复成前端提交的乘车人顺序，保证订单明细展示顺序稳定。
+        java.util.Map<Long, Passenger> passengerById =
+                new java.util.HashMap<>();
+        for (Passenger passenger : foundPassengers) {
+            passengerById.put(passenger.getId(), passenger);
+        }
+        List<Passenger> passengers =
+                new ArrayList<>(dto.getPassengerIds().size());
         for (Long passengerId : dto.getPassengerIds()) {
-            Passenger passenger =
-                    passengerMapper.findByIdAndUserId(passengerId, userId);
+            Passenger passenger = passengerById.get(passengerId);
             if (passenger == null) {
                 throw new BizException(ResultCode.PASSENGER_NOT_FOUND);
             }
-            // 保存完整对象，后面要生成姓名、证件号快照，而不是只保存一个外键 id。
             passengers.add(passenger);
         }
 
@@ -263,7 +302,7 @@ public class OrderServiceImpl implements OrderService {
         TicketOrder order = buildOrder(
                 dto, route, userId, passengers.size(),
                 fromSegmentIndex, toSegmentIndex,
-                pricePerPassenger, now);
+                pricePerPassenger, now, requestId);
 
         /*
          * 插入 ticket_order。
@@ -273,17 +312,32 @@ public class OrderServiceImpl implements OrderService {
          */
         orderMapper.insertOrder(order);
 
-        // 每一位乘车人对应一条 ticket_order_item，相当于一张票。
+        // 每一位乘车人对应一条 ticket_order_item，最后一次性批量插入。
+        List<TicketOrderItem> items =
+                new ArrayList<>(passengers.size());
         for (Passenger passenger : passengers) {
-            TicketOrderItem item = buildItem(
+            items.add(buildItem(
                     order.getId(), dto.getSeatType(),
-                    pricePerPassenger, passenger);
-
-            // 插入明细后，明细主键同样会回填到 item.getId()。
-            orderMapper.insertItem(item);
+                    pricePerPassenger, passenger));
         }
+        orderMapper.batchInsertItems(items);
 
         cacheInvalidator.invalidateDateAfterCommit(dto.getTravelDate());
+
+        if (syncRedisStock) {
+            /*
+             * 同步 HTTP 下单没有先去 Redis 抢预扣名额，因此数据库成功扣减后
+             * 要把数字库存同步减掉，保证之后走异步下单的请求看到同一份可售量。
+             * 异步消费者不执行这里：它在进入 MQ 前已经扣过 Redis。
+             */
+            stockCache.decrementAfterCommit(
+                    dto.getTravelDate(),
+                    dto.getTrainId(),
+                    dto.getSeatType(),
+                    fromSegmentIndex,
+                    toSegmentIndex,
+                    passengers.size());
+        }
 
         // 到这里库存和两张订单表都写成功，返回前端页面需要的下单结果。
         return toCreateOrderVO(order);
@@ -516,6 +570,13 @@ public class OrderServiceImpl implements OrderService {
             throw new BizException(ResultCode.ORDER_STATUS_ERROR);
         }
         cacheInvalidator.invalidateDateAfterCommit(order.getTravelDate());
+        stockCache.incrementAfterCommit(
+                order.getTravelDate(),
+                order.getTrainId(),
+                order.getSeatType(),
+                order.getFromSegmentIndex(),
+                order.getToSegmentIndex(),
+                order.getPassengerCount());
         return actionResult(
                 order.getOrderNo(), STATUS_CANCELLED, null, now);
     }
@@ -607,6 +668,13 @@ public class OrderServiceImpl implements OrderService {
             throw new BizException(ResultCode.ORDER_STATUS_ERROR);
         }
         cacheInvalidator.invalidateDateAfterCommit(order.getTravelDate());
+        stockCache.incrementAfterCommit(
+                order.getTravelDate(),
+                order.getTrainId(),
+                order.getSeatType(),
+                order.getFromSegmentIndex(),
+                order.getToSegmentIndex(),
+                refundCount);
 
         RefundResultVO result = new RefundResultVO();
         result.setOrderNo(order.getOrderNo());
@@ -683,11 +751,19 @@ public class OrderServiceImpl implements OrderService {
                                    int fromSegmentIndex,
                                    int toSegmentIndex,
                                    BigDecimal pricePerPassenger,
-                                   LocalDateTime now) {
+                                   LocalDateTime now,
+                                   String requestId) {
         TicketOrder order = new TicketOrder();
 
         // 业务订单号由“17 位时间 + 9 位随机数”组成，用户展示和排查日志都使用它。
         order.setOrderNo(generateOrderNo(now));
+
+        /*
+         * 同步下单幂等键。唯一索引 uk_order_request 是最终兜底：
+         * 并发提交同一个 Key 时，只有一个事务能插入成功，其余回滚后重放已有订单。
+         * 异步下单由 order_request.request_id 负责，这里保持 NULL。
+         */
+        order.setRequestId(requestId);
 
         // user_id 来自登录上下文，确认“谁下的单”。
         order.setUserId(userId);

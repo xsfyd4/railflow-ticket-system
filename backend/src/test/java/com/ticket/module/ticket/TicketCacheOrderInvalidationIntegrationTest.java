@@ -6,6 +6,7 @@ import com.ticket.module.order.dto.CreateOrderDTO;
 import com.ticket.module.order.dto.RefundOrderDTO;
 import com.ticket.module.order.vo.CreateOrderVO;
 import com.ticket.module.order.vo.OrderDetailVO;
+import com.ticket.module.stock.TicketStockCache;
 import com.ticket.module.ticket.dto.TicketSearchDTO;
 import com.ticket.module.ticket.vo.TicketSeatVO;
 import com.ticket.module.ticket.vo.TicketVO;
@@ -42,6 +43,9 @@ class TicketCacheOrderInvalidationIntegrationTest {
 
     @Autowired
     private StringRedisTemplate redis;
+
+    @Autowired
+    private TicketStockCache stockCache;
 
     private Long userId;
     private Long passengerId;
@@ -169,5 +173,10 @@ class TicketCacheOrderInvalidationIntegrationTest {
                 DELETE FROM ticket_stock
                 WHERE travel_date = ? AND train_id = 1
                 """, TEST_DATE);
+        List<String> stockKeys = new java.util.ArrayList<>();
+        for (int segment = 1; segment <= 4; segment++) {
+            stockKeys.add(stockCache.key(TEST_DATE, 1L, 3, segment));
+        }
+        redis.delete(stockKeys);
     }
 }

@@ -11,6 +11,7 @@ import com.ticket.module.order.vo.OrderActionResultVO;
 import com.ticket.module.order.vo.OrderDetailVO;
 import com.ticket.module.order.vo.OrderVO;
 import com.ticket.module.order.vo.RefundResultVO;
+import com.ticket.module.stock.TicketStockCache;
 import com.ticket.security.LoginUser;
 import com.ticket.security.LoginUserContext;
 import org.junit.jupiter.api.AfterEach;
@@ -18,6 +19,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.math.BigDecimal;
@@ -53,6 +55,12 @@ class OrderServiceImplIntegrationTest {
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
+
+    @Autowired
+    private StringRedisTemplate redis;
+
+    @Autowired
+    private TicketStockCache stockCache;
 
     @BeforeEach
     void setUp() {
@@ -136,6 +144,27 @@ class OrderServiceImplIntegrationTest {
         assertEquals(0, count(
                 "SELECT COUNT(*) FROM ticket_order WHERE user_id = ?",
                 primary.userId()));
+    }
+
+    @Test
+    void shouldRejectMixedOwnershipInOneBatchPassengerQuery() {
+        UserPassenger owner =
+                createUserAndPassenger(PRIMARY_USER, "110101199001011234");
+        UserPassenger other =
+                createUserAndPassenger(SECOND_USER, "110101199001011242");
+        prepareStock(10);
+
+        LoginUserContext.set(
+                new LoginUser(owner.userId(), PRIMARY_USER, "USER"));
+        BizException error = assertThrows(BizException.class,
+                () -> orderService.create(dto(List.of(
+                        owner.passengerId(), other.passengerId()))));
+
+        assertEquals(4001, error.getCode());
+        assertEquals(List.of(10, 10, 10, 10), remainingCounts());
+        assertEquals(0, count("""
+                SELECT COUNT(*) FROM ticket_order WHERE user_id = ?
+                """, owner.userId()));
     }
 
     @Test
@@ -715,6 +744,12 @@ class OrderServiceImplIntegrationTest {
                 WHERE travel_date = ?
                   AND train_id = ?
                 """, TEST_DATE, TRAIN_ID);
+        List<String> stockKeys = new java.util.ArrayList<>();
+        for (int segment = 1; segment <= 4; segment++) {
+            stockKeys.add(stockCache.key(
+                    TEST_DATE, TRAIN_ID, SEAT_TYPE, segment));
+        }
+        redis.delete(stockKeys);
     }
 
     private record UserPassenger(Long userId, Long passengerId) {

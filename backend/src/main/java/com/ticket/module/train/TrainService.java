@@ -24,4 +24,10 @@ public interface TrainService {
 
     /** 删除。有订单引用时抛 TRAIN_IN_USE，否则级联删除停站/分段/票价/库存 */
     void delete(Long id);
+
+    /**
+     * 没有订单时清空某车次全部库存，供管理员重新配置停站。
+     * 有订单时拒绝，避免破坏订单的起止段和退票库存。
+     */
+    void clearStocksForReconfiguration(Long id);
 }
