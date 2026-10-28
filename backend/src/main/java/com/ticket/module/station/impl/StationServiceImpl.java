@@ -109,14 +109,15 @@ public class StationServiceImpl implements StationService {
 
     @Override
     public void update(Long id, StationSaveDTO dto) {
-        // TODO
-        Station station=stationMapper.findById(id);
-        if (station==null){
+        Station station = stationMapper.findById(id);
+        if (station == null) {
             throw new BizException(ResultCode.STATION_NOT_FOUND);
         }
-        boolean codeUnchanged = dto.getStationCode().equals(station.getStationCode());
-        boolean codeAvailable = stationMapper.findByCode(dto.getStationCode()) == null;
-        if (!codeUnchanged && !codeAvailable){
+        boolean codeUnchanged = dto.getStationCode()
+                .equals(station.getStationCode());
+        boolean codeAvailable = stationMapper
+                .findByCode(dto.getStationCode()) == null;
+        if (!codeUnchanged && !codeAvailable) {
             throw new BizException(ResultCode.STATION_CODE_EXISTS);
         }
         station.setStationCode(dto.getStationCode());
@@ -126,10 +127,10 @@ public class StationServiceImpl implements StationService {
         station.setPinyin(dto.getPinyin());
         station.setPinyinAbbr(dto.getPinyinAbbr());
         // status 没传时保持原值，避免把停用的车站悄悄启用
-        station.setStatus(dto.getStatus() == null ? station.getStatus() : dto.getStatus());
+        station.setStatus(dto.getStatus() == null
+                ? station.getStatus() : dto.getStatus());
         stationMapper.update(station);
         cacheInvalidator.invalidateStaticDataAfterCommit();
-
     }
 
     @Override

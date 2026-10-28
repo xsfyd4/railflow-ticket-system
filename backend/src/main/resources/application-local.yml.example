@@ -1,0 +1,8 @@
+spring:
+  datasource:
+    username: root
+    password: change-me
+
+ticket:
+  jwt:
+    secret: replace-with-at-least-32-random-characters

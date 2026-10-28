@@ -154,7 +154,19 @@ npm run dev
 
 ## 后端运行
 
-在 IDEA 中启动 `TicketApplication` 是最简单的方式。
+复制本地配置模板，并填写自己的 MySQL 密码：
+
+```powershell
+Copy-Item `
+  backend/src/main/resources/application-local.yml.example `
+  backend/src/main/resources/application-local.yml
+```
+
+`application-local.yml` 已被 Git 忽略。也可以使用
+`SPRING_DATASOURCE_USERNAME`、`SPRING_DATASOURCE_PASSWORD` 和
+`TICKET_JWT_SECRET` 环境变量覆盖默认配置。
+
+配置完成后，在 IDEA 中启动 `TicketApplication` 即可。
 
 当前 Codex 工具环境中的 JDK 23 无法为 Tomcat 建立 Windows 内部 loopback pipe，
 因此本地联调也支持使用 Docker 中的 Linux JDK 启动后端。容器网络

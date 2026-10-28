@@ -46,7 +46,6 @@ public class AdminAuthController {
      */
     @PostMapping("/login")
     public R<AdminLoginVO> login(@RequestBody @Valid LoginDTO dto) {
-        // TODO 一行就够：调 service，包 R
         return R.ok(adminAuthService.login(dto));
     }
 

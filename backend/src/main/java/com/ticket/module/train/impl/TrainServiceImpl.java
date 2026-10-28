@@ -54,55 +54,42 @@ public class TrainServiceImpl implements TrainService {
 
     @Override
     public PageResult<TrainVO> page(TrainQueryDTO query) {
-        // TODO 和 StationServiceImpl.page() 几乎一样
-        // 提示：
-        //   1. 兜底 page/size，并把修正后的值写回 query（XML 里用 #{query.size}）
-        //   2. offset = (page - 1) * size
-        //   3. countByQuery + findPage（findPage 已经带站名了，不用再转 VO）
-        //   4. PageResult.of(total, page, size, records)
-        int page=(query.getPage()==null||query.getPage()<1)?1: query.getPage();
-        int size=(query.getSize()==null||query.getSize()<10)?10:query.getSize();
-        if (size>100){
-            size=100;
+        int page = query.getPage() == null || query.getPage() < 1
+                ? 1 : query.getPage();
+        int size = query.getSize() == null || query.getSize() < 1
+                ? 10 : query.getSize();
+        if (size > 100) {
+            size = 100;
         }
         query.setSize(size);
         query.setPage(page);
-        int offset=(page-1)*size;
-        long total=trainMapper.countByQuery(query);
-        List<TrainVO> records=trainMapper.findPage(query,offset);
-        return  PageResult.of(total, page, size, records);
-
+        int offset = (page - 1) * size;
+        long total = trainMapper.countByQuery(query);
+        List<TrainVO> records = trainMapper.findPage(query, offset);
+        return PageResult.of(total, page, size, records);
     }
 
     @Override
     public TrainVO detail(Long id) {
-        // TODO 查不到抛 ResultCode.TRAIN_NOT_FOUND
-        TrainVO trainVo=trainMapper.findById(id);
-        if (trainVo==null){
+        TrainVO trainVo = trainMapper.findById(id);
+        if (trainVo == null) {
             throw new BizException(ResultCode.TRAIN_NOT_FOUND);
-        }else {
-            return trainVo;
         }
-
+        return trainVo;
     }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
     public Long create(TrainSaveDTO dto) {
-        // TODO
-        // 提示：
-        //   1. 先校验 startStationId != endStationId，相等抛 BizException(400, "始发站和终到站不能相同")
-        //   2. findByTrainNo 查重，重复抛 TRAIN_NO_EXISTS
-        //   3. DTO → Train 实体（status 没传默认 1）
-        //   4. insert，返回 train.getId()
-        if (dto.getStartStationId().equals(dto.getEndStationId())){
-            throw  new BizException(400,"始发站终点站不可相同");
+        if (dto.getStartStationId().equals(dto.getEndStationId())) {
+            throw new BizException(400, "始发站和终点站不能相同");
         }
-        Train unexisting=trainMapper.findByTrainNo(dto.getTrainNo());
-        if (unexisting!=null){
+        Train duplicate = trainMapper.findByTrainNo(dto.getTrainNo());
+        if (duplicate != null) {
             throw new BizException(ResultCode.TRAIN_NO_EXISTS);
-        };
-        Train train=new Train();
+        }
+
+        Train train = new Train();
         train.setTrainNo(dto.getTrainNo());
         train.setTrainType(dto.getTrainType());
         train.setStartStationId(dto.getStartStationId());
@@ -112,7 +99,7 @@ public class TrainServiceImpl implements TrainService {
         train.setRemark(dto.getRemark());
         try {
             trainMapper.insert(train);
-        }catch(DuplicateKeyException e){
+        } catch (DuplicateKeyException e) {
             throw new BizException(ResultCode.TRAIN_NO_EXISTS);
         }
         cacheInvalidator.invalidateStaticDataAfterCommit();
@@ -122,13 +109,10 @@ public class TrainServiceImpl implements TrainService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void update(Long id, TrainSaveDTO dto) {
-        // TODO
-        // 提示：和车站的 update 一样——先查存在、再查重（排除自己）、改字段、update
-        // 注意 status 没传时要保持原值
-        if (dto.getStartStationId().equals(dto.getEndStationId())){
-            throw  new BizException(400,"始发站终点站不可相同");
+        if (dto.getStartStationId().equals(dto.getEndStationId())) {
+            throw new BizException(400, "始发站和终点站不能相同");
         }
-        // 查一次，后面都用它（顺便拿到原来的 status）
+
         TrainVO existing = trainMapper.findById(id);
         if (existing == null) {
             throw new BizException(ResultCode.TRAIN_NOT_FOUND);
@@ -159,23 +143,22 @@ public class TrainServiceImpl implements TrainService {
                 && trainMapper.findByTrainNo(dto.getTrainNo()) != null) {
             throw new BizException(ResultCode.TRAIN_NO_EXISTS);
         }
-        Train train=new Train();
+        Train train = new Train();
         train.setId(id);
         train.setTrainNo(dto.getTrainNo());
         train.setTrainType(dto.getTrainType());
         train.setStartStationId(dto.getStartStationId());
         train.setEndStationId(dto.getEndStationId());
         train.setTotalMileage(dto.getTotalMileage());
-        // status 没传时保持原值，否则会被写成 null（NOT NULL 列，直接报错）
-        train.setStatus(dto.getStatus() == null ? existing.getStatus() : dto.getStatus());
+        train.setStatus(dto.getStatus() == null
+                ? existing.getStatus() : dto.getStatus());
         train.setRemark(dto.getRemark());
         try {
             trainMapper.update(train);
-        }catch(DuplicateKeyException e){
+        } catch (DuplicateKeyException e) {
             throw new BizException(ResultCode.TRAIN_NO_EXISTS);
         }
         cacheInvalidator.invalidateStaticDataAfterCommit();
-
     }
 
     @Override

@@ -9,16 +9,21 @@ server:
 spring:
   application:
     name: train-ticket-backend
+  profiles:
+    active: ${SPRING_PROFILES_ACTIVE:local}
+  config:
+    # 本地开发可复制 application-local.yml.example，敏感值不会提交到 Git。
+    import: optional:classpath:application-local.yml
 
   # ----------------------------------------------------------
   #  数据库连接（阶段 2 新增）
-  #  ★ password 那一行必须改成你自己装 MySQL 时设的密码
+  #  密码通过 application-local.yml 或环境变量提供
   # ----------------------------------------------------------
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver
-    url: jdbc:mysql://localhost:3306/train_ticket?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
-    username: root
-    password: REMOVED_SECRET
+    url: ${SPRING_DATASOURCE_URL:jdbc:mysql://localhost:3306/train_ticket?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true}
+    username: ${SPRING_DATASOURCE_USERNAME:root}
+    password: ${SPRING_DATASOURCE_PASSWORD:}
     hikari:
       maximum-pool-size: 20      # 压测确认 10 个连接会形成明显队列，先对照调整为 20
       minimum-idle: 5            # 空闲时保留 5 个
@@ -28,10 +33,10 @@ spring:
   #  RabbitMQ（5672 是通信端口，15672 是管理界面）
   # ----------------------------------------------------------
   rabbitmq:
-    host: localhost
-    port: 5672
-    username: guest
-    password: guest
+    host: ${SPRING_RABBITMQ_HOST:localhost}
+    port: ${SPRING_RABBITMQ_PORT:5672}
+    username: ${SPRING_RABBITMQ_USERNAME:guest}
+    password: ${SPRING_RABBITMQ_PASSWORD:guest}
     listener:
       simple:
         # 每个消费者实例先开 2 个线程，忙时最多 8 个。
@@ -150,14 +155,13 @@ ticket:
     # 签名密钥。HS256 算法要求至少 32 字节（256 位），太短 jjwt 启动就报错。
     # ★ 真实项目里这个值必须放进环境变量，绝不能提交到 Git——
     #   泄露了别人就能自己签发任意用户的 token。
-    secret: train-ticket-dev-secret-key-change-me-2026
+    secret: ${TICKET_JWT_SECRET:train-ticket-dev-secret-key-change-me-2026}
     # token 有效期，单位秒。604800 秒 = 7 天
     expire-seconds: 604800
     # 签发者标识，解析时会校验，防止别的系统签的 token 混进来
     issuer: train-ticket
 
 # ------------------------------------------------------------
-#  小提醒：密码明文写在配置文件里，本地练习没问题，
-#  但真实项目里这个文件是要提交到 Git 的，密码会泄露。
-#  届时的做法是拆一个 application-local.yml（已被 .gitignore 忽略）来放密码。
+#  本地敏感配置放在 application-local.yml（已被 Git 忽略）。
+#  部署时优先通过环境变量注入密码和 JWT 密钥。
 # ------------------------------------------------------------
