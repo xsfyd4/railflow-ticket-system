@@ -46,7 +46,7 @@ async function submit() {
       </div>
       <div class="stat-strip">
         <div><strong>110</strong><span>车站</span></div>
-        <div><strong>100</strong><span>车次</span></div>
+        <div><strong>1000</strong><span>车次</span></div>
         <div><strong>30</strong><span>天预售</span></div>
       </div>
     </div>

@@ -97,9 +97,9 @@ fromStationId + toStationId
 运行时长、里程和分席别票价。当前数据构建结果为：
 
 ```text
-296 个有向站对
-840 条站对车次关系
-构建耗时约 390ms
+538 个有向站对
+8400 条站对车次关系
+构建耗时约 526ms
 ```
 
 索引状态：
@@ -116,10 +116,45 @@ NEW → REBUILDING → READY
 - 然后后台构建新索引；
 - 构建完成后用 `AtomicReference` 原子替换；
 - 构建失败时保持 `UNAVAILABLE` 并定时重试；
-- 索引未就绪期间不读取 Redis 查票对象，直接走 MySQL 慢查询。
+- 索引未就绪期间先读取可用缓存；缓存未命中后通过重建锁保护 MySQL 慢查询。
 
 缓存未命中且索引 READY 时，只执行一次 `ticket_stock` 批量查询，
 不再执行原来的 `countTrains + findTrainIds + findSeatRows` 三条联表查询。
+
+### 三-B、雪崩、穿透与击穿
+
+查票缓存采用以下防护：
+
+```text
+雪崩：
+10 秒基础 TTL ±20% 随机抖动
+空结果使用约 3 秒短 TTL
+
+穿透：
+索引 READY 且站对不存在
+→ 直接返回空页
+→ 不访问 Redis
+→ 不查询 MySQL
+
+击穿：
+热点 Key 未命中
+→ SET NX 抢重建锁
+→ 锁 owner 查库存并回填
+→ 其他请求指数退避等待
+```
+
+重建锁：
+
+```text
+Key: ticket:search:rebuild-lock:{cacheKey}
+TTL: 3000ms
+owner: UUID
+释放: Lua GET 比较 + DEL
+等待: 约 20 / 40 / 80 / 160 / 320ms
+```
+
+锁只负责首轮缓存重建。Redis 不可用或等待超时后，仍退回本地车段索引；
+索引也不可用时才执行完整 MySQL 慢查询，保证可用性不被缓存锁绑架。
 
 ## 四、UUID 幂等状态
 

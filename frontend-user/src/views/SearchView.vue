@@ -209,7 +209,7 @@ function passengerTypeLabel(type) {
       <div class="hero-copy">
         <span class="eyebrow">TRAIN TICKET SEARCH</span>
         <h1>把目的地，<br /><em>变成下一站。</em></h1>
-        <p>100 个国内演示车次，分段库存实时计算。选择出发与到达，我们为你找到余票。</p>
+        <p>1000 个国内演示车次，分段库存实时计算。选择出发与到达，我们为你找到余票。</p>
       </div>
       <div class="hero-note">
         <span class="live-dot"></span>

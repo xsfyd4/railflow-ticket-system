@@ -1,0 +1,26 @@
+{
+  "timestamp": "2026-10-28T15:45:27+0800",
+  "target": "http://localhost:8080/api/user/orders/async",
+  "scenario": "async-order",
+  "count": 200,
+  "concurrency": 32,
+  "actualDurationSeconds": 1.481,
+  "ordersPerSecond": 135.04,
+  "successfulOrders": 200,
+  "failedOrders": 0,
+  "submitLatencyMs": {
+    "avg": 37.82,
+    "p50": 33.8,
+    "p95": 58.73,
+    "p99": 61.93,
+    "max": 76.12
+  },
+  "endToEndLatencyMs": {
+    "avg": 214.64,
+    "p50": 249.06,
+    "p95": 307.16,
+    "p99": 337.29,
+    "max": 395.83
+  },
+  "sampleFailures": []
+}

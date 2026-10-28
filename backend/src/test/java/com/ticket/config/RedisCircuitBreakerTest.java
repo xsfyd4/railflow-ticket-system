@@ -23,5 +23,9 @@ class RedisCircuitBreakerTest {
 
         Thread.sleep(1100);
         assertTrue(breaker.isAvailable());
+        assertFalse(breaker.isAvailable(),
+                "半开状态只能放行一个探测请求");
+        breaker.success();
+        assertTrue(breaker.isAvailable());
     }
 }

@@ -46,17 +46,20 @@ public class RedisCircuitBreaker {
         if (until == 0) {
             return true;
         }
-        if (Instant.now().toEpochMilli() < until) {
+        long now = Instant.now().toEpochMilli();
+        if (until == -1L || now < until) {
             return false;
         }
-        openUntil.compareAndSet(until, 0);
-        failures.set(0);
-        log.info("cache Redis 熔断冷却结束，开始探测");
-        return true;
+        if (openUntil.compareAndSet(until, -1L)) {
+            log.info("cache Redis 熔断冷却结束，只允许一个请求探测");
+            return true;
+        }
+        return false;
     }
 
     public boolean isOpen() {
-        return openUntil.get() > Instant.now().toEpochMilli();
+        long until = openUntil.get();
+        return until == -1L || until > Instant.now().toEpochMilli();
     }
 
     public void success() {
@@ -65,6 +68,13 @@ public class RedisCircuitBreaker {
     }
 
     public void failure(Throwable error) {
+        if (openUntil.get() == -1L) {
+            openUntil.set(Instant.now().toEpochMilli() + openMillis);
+            log.warn("cache Redis 半开探测失败，重新熔断 {} 秒：{}",
+                    openMillis / 1000,
+                    error == null ? "" : error.getMessage());
+            return;
+        }
         int current = failures.incrementAndGet();
         if (current < failureThreshold) {
             return;

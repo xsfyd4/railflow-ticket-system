@@ -115,6 +115,15 @@ ticket:
     enabled: true
     # 查票结果缓存时间。库存变化会通过版本号立即失效。
     search-ttl-seconds: 10
+    # 实际 TTL 在基础值上下随机浮动，避免同一批 Key 同时过期形成雪崩。
+    search-ttl-jitter-percent: 20
+    # 有线路但当天无车次/无库存时使用更短的空结果 TTL。
+    empty-ttl-seconds: 3
+    # 热点缓存失效后只允许一个实例回源并更新缓存。
+    rebuild-lock-ttl-ms: 3000
+    # 未抢到锁的实例使用指数退避等待缓存回填。
+    rebuild-wait-attempts: 5
+    rebuild-wait-base-delay-ms: 20
     # Redis 分段数字库存，用于异步下单原子预扣。
     stock-enabled: true
     # 车票日期后至少保留几天的数字库存，便于退票和排障。

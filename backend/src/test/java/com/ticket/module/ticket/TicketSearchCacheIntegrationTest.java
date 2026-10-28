@@ -19,9 +19,12 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE)
 class TicketSearchCacheIntegrationTest {
@@ -43,6 +46,9 @@ class TicketSearchCacheIntegrationTest {
 
     @Autowired
     private TicketStockCache stockCache;
+
+    @Autowired
+    private TicketSearchCache searchCache;
 
     @BeforeEach
     void setUp() {
@@ -100,6 +106,61 @@ class TicketSearchCacheIntegrationTest {
                 "库存事务提交后应递增日期版本并回源 MySQL");
     }
 
+    @Test
+    void shouldJitterTtlAndUseShorterTtlForEmptyResult() {
+        TicketSearchDTO hitQuery = query(TEST_DATE);
+        ticketService.search(hitQuery);
+        TicketSearchCache.CacheToken hitToken =
+                searchCache.currentToken(TEST_DATE);
+        String hitKey = searchCache.cacheKey(hitQuery, hitToken);
+        Long hitTtl = redis.getExpire(hitKey, TimeUnit.MILLISECONDS);
+
+        assertNotNull(hitTtl);
+        assertTrue(hitTtl >= 7_500 && hitTtl <= 12_500,
+                "10 秒基础 TTL 应在 ±20% 范围内抖动，实际=" + hitTtl);
+
+        TicketSearchDTO emptyQuery = query(TEST_DATE.plusDays(1));
+        ticketService.search(emptyQuery);
+        TicketSearchCache.CacheToken emptyToken =
+                searchCache.currentToken(emptyQuery.getTravelDate());
+        String emptyKey = searchCache.cacheKey(emptyQuery, emptyToken);
+        Long emptyTtl = redis.getExpire(emptyKey, TimeUnit.MILLISECONDS);
+
+        assertNotNull(emptyTtl);
+        assertTrue(emptyTtl >= 2_000 && emptyTtl <= 4_000,
+                "空结果应使用约 3 秒 TTL，实际=" + emptyTtl);
+    }
+
+    @Test
+    void shouldAllowOnlyOneOwnerToAcquireRebuildLock() {
+        String cacheKey = "lock-test-" + System.nanoTime();
+        TicketSearchCache.LockToken first =
+                searchCache.tryAcquireRebuildLock(cacheKey);
+        TicketSearchCache.LockToken second =
+                searchCache.tryAcquireRebuildLock(cacheKey);
+
+        assertTrue(first.acquired());
+        assertTrue(second.available());
+        assertFalse(second.acquired());
+
+        searchCache.releaseRebuildLock(first);
+        TicketSearchCache.LockToken third =
+                searchCache.tryAcquireRebuildLock(cacheKey);
+        assertTrue(third.acquired());
+        searchCache.releaseRebuildLock(third);
+    }
+
+    private TicketSearchDTO query(LocalDate travelDate) {
+        TicketSearchDTO query = new TicketSearchDTO();
+        query.setFromStationId(1L);
+        query.setToStationId(27L);
+        query.setTravelDate(travelDate);
+        query.setSeatType(3);
+        query.setPage(1);
+        query.setSize(10);
+        return query;
+    }
+
     private int remain(PageResult<TicketVO> page) {
         TicketVO g1001 = page.getRecords().stream()
                 .filter(item -> "G1001".equals(item.getTrainNo()))
@@ -117,9 +178,11 @@ class TicketSearchCacheIntegrationTest {
                 DELETE FROM ticket_stock
                 WHERE travel_date = ? AND train_id = 1
                 """, TEST_DATE);
-        Set<String> keys = redis.keys("ticket:search:*" + TEST_DATE + "*");
-        if (keys != null && !keys.isEmpty()) {
-            redis.delete(keys);
+        for (LocalDate date : List.of(TEST_DATE, TEST_DATE.plusDays(1))) {
+            Set<String> keys = redis.keys("ticket:search:*" + date + "*");
+            if (keys != null && !keys.isEmpty()) {
+                redis.delete(keys);
+            }
         }
         List<String> stockKeys = new java.util.ArrayList<>();
         for (int segment = 1; segment <= 4; segment++) {

@@ -13,12 +13,15 @@ import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ThreadLocalRandom;
+import java.util.function.Supplier;
 
 @Service
 public class TicketServiceImpl implements TicketService {
@@ -31,24 +34,43 @@ public class TicketServiceImpl implements TicketService {
     private final TrainRouteIndex routeIndex;
     private final IndexedTicketSearchService indexedSearch;
     private final Counter cacheHits;
+    private final Counter cacheWaitHits;
+    private final Counter cacheLockFallbacks;
+    private final Counter routeMisses;
     private final Counter indexedSearches;
     private final Counter slowSearches;
+    private final int rebuildWaitAttempts;
+    private final long rebuildWaitBaseDelayMs;
 
     public TicketServiceImpl(TicketSearchMapper mapper,
                              TicketSearchCache cache,
                              TrainRouteIndex routeIndex,
                              IndexedTicketSearchService indexedSearch,
-                             MeterRegistry meterRegistry) {
+                             MeterRegistry meterRegistry,
+                             @Value("${ticket.cache.rebuild-wait-attempts:5}")
+                             int rebuildWaitAttempts,
+                             @Value("${ticket.cache.rebuild-wait-base-delay-ms:20}")
+                             long rebuildWaitBaseDelayMs) {
         this.mapper = mapper;
         this.cache = cache;
         this.routeIndex = routeIndex;
         this.indexedSearch = indexedSearch;
         this.cacheHits = meterRegistry.counter(
                 "ticket.search.path.cache.hit");
+        this.cacheWaitHits = meterRegistry.counter(
+                "ticket.search.path.cache.wait-hit");
+        this.cacheLockFallbacks = meterRegistry.counter(
+                "ticket.search.path.cache.lock-fallback");
+        this.routeMisses = meterRegistry.counter(
+                "ticket.search.path.route-miss");
         this.indexedSearches = meterRegistry.counter(
                 "ticket.search.path.index");
         this.slowSearches = meterRegistry.counter(
                 "ticket.search.path.mysql-slow");
+        this.rebuildWaitAttempts = Math.max(1,
+                Math.min(10, rebuildWaitAttempts));
+        this.rebuildWaitBaseDelayMs = Math.max(1,
+                Math.min(1000, rebuildWaitBaseDelayMs));
     }
 
     @Override
@@ -67,32 +89,46 @@ public class TicketServiceImpl implements TicketService {
          * 版本在数据库查询前确定，写入时继续使用同一版本；
          * 如果期间发生库存变化，新版本会使本次旧结果不可达。
          */
-        if (!routeIndex.isReady() || !cache.isAvailable()) {
-            return searchMysqlSlow(q);
+        boolean indexReady = routeIndex.isReady();
+        /*
+         * 索引已经完整加载时不存在的站对可以直接判定为无车次。
+         * 这类请求不访问 Redis，也不写空缓存，避免随机不存在的站对
+         * 和日期制造海量缓存 Key 或穿透到 MySQL。
+         */
+        if (indexReady && !routeIndex.hasRoute(
+                q.getFromStationId(), q.getToStationId())) {
+            routeMisses.increment();
+            return PageResult.of(0, page, size, List.of());
         }
 
         TicketSearchCache.CacheToken cacheToken =
                 cache.currentToken(q.getTravelDate());
-        if (!cacheToken.enabled()) {
-            return searchMysqlSlow(q);
+        if (cacheToken.enabled()) {
+            PageResult<TicketVO> cached = cache.get(q, cacheToken);
+            if (cached != null) {
+                cacheHits.increment();
+                return cached;
+            }
         }
-        PageResult<TicketVO> cached = cache.get(q, cacheToken);
-        if (cached != null) {
-            cacheHits.increment();
-            return cached;
-        }
-        if (!cache.isAvailable()) {
-            return searchMysqlSlow(q);
+
+        if (!indexReady) {
+            return loadCacheWithLock(
+                    q, cacheToken, () -> searchMysqlSlow(q));
         }
 
         try {
-            PageResult<TicketVO> result = indexedSearch.search(q);
-            indexedSearches.increment();
-            cache.put(q, cacheToken, result);
-            return result;
+            return loadCacheWithLock(
+                    q, cacheToken, () -> {
+                        PageResult<TicketVO> result =
+                                indexedSearch.search(q);
+                        indexedSearches.increment();
+                        return result;
+                    });
         } catch (Exception e) {
             log.warn("索引快查询失败，降级 MySQL 慢查询：{}", e.getMessage());
-            return searchMysqlSlow(q);
+            PageResult<TicketVO> fallback = searchMysqlSlow(q);
+            cache.put(q, cacheToken, fallback);
+            return fallback;
         }
     }
 
@@ -103,8 +139,6 @@ public class TicketServiceImpl implements TicketService {
      */
     private PageResult<TicketVO> searchMysqlSlow(TicketSearchDTO q) {
         slowSearches.increment();
-        TicketSearchCache.CacheToken cacheToken =
-                cache.currentToken(q.getTravelDate());
         int page = q.getPage();
         int size = q.getSize();
 
@@ -113,7 +147,6 @@ public class TicketServiceImpl implements TicketService {
         if (total == 0) {
             PageResult<TicketVO> result =
                     PageResult.of(0, page, size, List.of());
-            cache.put(q, cacheToken, result);
             return result;
         }
 
@@ -123,7 +156,6 @@ public class TicketServiceImpl implements TicketService {
         if (ids.isEmpty()) {
             PageResult<TicketVO> result =
                     PageResult.of(total, page, size, List.of());
-            cache.put(q, cacheToken, result);
             return result;
         }
 
@@ -148,8 +180,82 @@ public class TicketServiceImpl implements TicketService {
         }
         PageResult<TicketVO> result =
                 PageResult.of(total, page, size, records);
-        cache.put(q, cacheToken, result);
         return result;
+    }
+
+    private PageResult<TicketVO> loadCacheWithLock(
+            TicketSearchDTO query,
+            TicketSearchCache.CacheToken token,
+            Supplier<PageResult<TicketVO>> loader) {
+        if (!token.enabled()) {
+            return loader.get();
+        }
+
+        String cacheKey = cache.cacheKey(query, token);
+        TicketSearchCache.LockToken lock =
+                cache.tryAcquireRebuildLock(cacheKey);
+        if (lock.acquired()) {
+            return refreshUnderLock(query, token, loader, lock);
+        }
+
+        if (!lock.available()) {
+            cacheLockFallbacks.increment();
+            return loader.get();
+        }
+
+        for (int attempt = 0; attempt < rebuildWaitAttempts; attempt++) {
+            if (!sleepBackoff(attempt)) {
+                break;
+            }
+            PageResult<TicketVO> cached = cache.get(query, token);
+            if (cached != null) {
+                cacheWaitHits.increment();
+                return cached;
+            }
+            lock = cache.tryAcquireRebuildLock(cacheKey);
+            if (lock.acquired()) {
+                return refreshUnderLock(query, token, loader, lock);
+            }
+            if (!lock.available()) {
+                break;
+            }
+        }
+
+        cacheLockFallbacks.increment();
+        return loader.get();
+    }
+
+    private PageResult<TicketVO> refreshUnderLock(
+            TicketSearchDTO query,
+            TicketSearchCache.CacheToken token,
+            Supplier<PageResult<TicketVO>> loader,
+            TicketSearchCache.LockToken lock) {
+        try {
+            PageResult<TicketVO> cached = cache.get(query, token);
+            if (cached != null) {
+                cacheWaitHits.increment();
+                return cached;
+            }
+            PageResult<TicketVO> result = loader.get();
+            cache.put(query, token, result);
+            return result;
+        } finally {
+            cache.releaseRebuildLock(lock);
+        }
+    }
+
+    private boolean sleepBackoff(int attempt) {
+        long exponential = rebuildWaitBaseDelayMs
+                << Math.min(attempt, 10);
+        long jitter = ThreadLocalRandom.current()
+                .nextLong(rebuildWaitBaseDelayMs + 1);
+        try {
+            Thread.sleep(Math.min(1000, exponential + jitter));
+            return true;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        }
     }
 
     private TicketVO toVO(TicketSeatRow r) {

@@ -6,6 +6,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
 import org.springframework.data.redis.connection.RedisConfiguration;
+import org.springframework.data.redis.connection.RedisConnectionFactory;
 import org.springframework.data.redis.connection.RedisNode;
 import org.springframework.data.redis.connection.RedisPassword;
 import org.springframework.data.redis.connection.RedisSentinelConfiguration;
@@ -29,7 +30,7 @@ public class TicketRedisConfig {
 
     @Bean
     @Primary
-    public JedisConnectionFactory stockRedisConnectionFactory(
+    public RedisConnectionFactory stockRedisConnectionFactory(
             TicketRedisProperties properties) {
         return connectionFactory(
                 properties.getStock(),
@@ -38,7 +39,7 @@ public class TicketRedisConfig {
     }
 
     @Bean
-    public JedisConnectionFactory cacheRedisConnectionFactory(
+    public RedisConnectionFactory cacheRedisConnectionFactory(
             TicketRedisProperties properties) {
         return connectionFactory(
                 properties.getCache(),
@@ -50,18 +51,18 @@ public class TicketRedisConfig {
     @Primary
     public StringRedisTemplate writeRedisTemplate(
             @Qualifier("stockRedisConnectionFactory")
-            JedisConnectionFactory factory) {
+            RedisConnectionFactory factory) {
         return new StringRedisTemplate(factory);
     }
 
     @Bean
     public StringRedisTemplate cacheRedisTemplate(
             @Qualifier("cacheRedisConnectionFactory")
-            JedisConnectionFactory factory) {
+            RedisConnectionFactory factory) {
         return new StringRedisTemplate(factory);
     }
 
-    private JedisConnectionFactory connectionFactory(
+    private RedisConnectionFactory connectionFactory(
             TicketRedisProperties.Group group,
             long commandTimeoutMs,
             String clientName) {
@@ -72,14 +73,17 @@ public class TicketRedisConfig {
         poolConfig.setMinIdle(2);
         poolConfig.setTestOnBorrow(true);
 
-        JedisConnectionFactory factory;
         if (configuration instanceof RedisSentinelConfiguration sentinel) {
-            factory = new JedisConnectionFactory(sentinel, poolConfig);
-        } else {
-            factory = new JedisConnectionFactory(
-                    (RedisStandaloneConfiguration) configuration);
-            factory.setPoolConfig(poolConfig);
+            LazyJedisConnectionFactory factory =
+                    new LazyJedisConnectionFactory(sentinel, poolConfig);
+            factory.setClientName(clientName);
+            factory.setTimeout((int) Math.max(200, commandTimeoutMs));
+            return factory;
         }
+
+        LazyJedisConnectionFactory factory = new LazyJedisConnectionFactory(
+                (RedisStandaloneConfiguration) configuration);
+        factory.setPoolConfig(poolConfig);
         factory.setClientName(clientName);
         factory.setUsePool(true);
         factory.setTimeout((int) Math.max(200, commandTimeoutMs));

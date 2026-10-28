@@ -2,8 +2,8 @@
 
 一个仿 12306 的在线购票系统，当作「从零到能上手项目」的练手工程。
 
-项目的长期定位是**高并发、大数据量的铁路购票系统**。当前 100 个车次和
-28440 条库存只用于功能验证，不代表最终容量设计。
+项目的长期定位是**高并发、大数据量的铁路购票系统**。当前 1000 个车次和
+284400 条库存用于扩大规模验证，但仍不代表全国真实容量设计。
 
 它不是一个一次写完的项目，而是**按阶段慢慢加技术**：每个阶段结束都能跑起来、看得见效果，
 再进入下一阶段。核心购票流程已经先用「前端 + 后端 + 数据库」跑通，
@@ -109,9 +109,9 @@ mysql -u root -p --default-character-set=utf8mb4 < sql/03-demo-data-large.sql
 `03-demo-data-large.sql` 当前包含：
 
 - 110 个国内车站，覆盖 32 个省级地区、87 个城市。
-- 恰好 100 个国内车次：60 个 G、12 个 D、16 个 K、8 个 T、4 个 Z。
-- 416 条停站、316 个分段、948 条分段票价。
-- 从执行脚本第二天开始，共 30 天、28440 条分段库存。
+- 恰好 1000 个国内车次：600 个 G、120 个 D、160 个 K、80 个 T、40 个 Z。
+- 4160 条停站、3160 个分段、9480 条分段票价。
+- 从执行脚本第二天开始，共 30 天、284400 条分段库存。
 
 演示账号统一密码 `123456`：
 
@@ -121,7 +121,6 @@ mysql -u root -p --default-character-set=utf8mb4 < sql/03-demo-data-large.sql
 | 用户端 | `lisi` | 普通用户，已有一个乘车人 |
 | 管理端 | `admin` | 超级管理员 |
 
-`02-init-data.sql` 是最早的 5 站 1 车次教学版本，不再作为推荐初始化脚本。
 重新生成 `03` 数据：
 
 ```bash
@@ -235,3 +234,23 @@ Authorization: Bearer <token>
 ```
 
 原有同步接口 `POST /api/user/orders` 继续保留，便于对照学习。
+
+## 综合压测
+
+混合读写压测默认按 90% 查票、5% 下单后取消、3% 订单列表和
+2% 支付幂等执行：
+
+```powershell
+python -B scripts/mixed_load_test.py `
+  --processes 4 --workers-per-process 16 `
+  --duration 30 --travel-date 2026-10-29 `
+  --output docs/load-test-mixed-64w-30s.json
+```
+
+RabbitMQ 异步下单完整链路压测：
+
+```powershell
+python -B scripts/async_order_test.py `
+  --count 200 --concurrency 32 --travel-date 2026-10-29 `
+  --output docs/load-test-async-200.json
+```

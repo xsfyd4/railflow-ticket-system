@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-生成国内演示数据：110 个车站 + 100 个车次（含停站、分段、票价和未来 30 天库存）。
+生成国内演示数据：110 个车站 + 1000 个车次（含停站、分段、票价和未来 30 天库存）。
 
 用法：
     python scripts/gen_demo_data.py
@@ -9,7 +9,7 @@
     sql/03-demo-data-large.sql
 
 为什么用脚本而不是手写 SQL：
-    100 个车次 × 多站路线 × 3 种席别 × 30 天库存，手写不现实。
+    1000 个车次 × 多站路线 × 3 种席别 × 30 天库存，手写不现实。
     手写不现实，而且改一个参数（比如速度）就要全部重算。
 
 数据的性质：
@@ -144,7 +144,8 @@ STATIONS = [
     ("乌兰察布", "乌兰察布", "内蒙古自治区", "wulanchabu", "wlcb"),
 ]
 
-# 线路：(起点, 途经站, 终点)。共 50 条，每条生成早晚两个车次，合计 100 个车次。
+# 线路：(起点, 途经站, 终点)。共 50 条基准线路。
+# 每条线路生成正反两个方向，每个方向 10 个时段，合计 1000 个车次。
 ROUTES = [
     ("北京南", ["济南西", "南京南", "苏州北"], "上海虹桥"),
     ("北京西", ["石家庄", "郑州东", "武汉", "长沙南"], "广州南"),
@@ -199,9 +200,11 @@ ROUTES = [
 ]
 
 SEAT_TYPES = [1, 2, 3]
+DIRECTIONS_PER_ROUTE = 2
+DEPARTURES_PER_DIRECTION = 10
 
-# 50 条线路对应的车型。每条线路生成 2 个车次：
-# G=60、D=12、K=16、T=8、Z=4，合计 100。
+# 50 条线路对应的车型。每条线路的两个方向共用车型，
+# 总共生成 1000 个车次，同时保持 G/D/K/T/Z 的丰富度。
 ROUTE_TYPES = (
     ["G"] * 22
     + ["K"] * 2
@@ -299,71 +302,79 @@ def build():
     number_seq = {"G": 1001, "D": 2001, "K": 3001, "T": 4001, "Z": 5001}
 
     for route_index, (start, mids, end) in enumerate(ROUTES):
-        path = [start] + mids + [end]
         train_type = ROUTE_TYPES[route_index]
         config = TYPE_CONFIG[train_type]
+        base_path = [start] + mids + [end]
 
-        # 每条线路两趟车：一趟早上、一趟下午
-        for variant in range(2):
-            train_id += 1
-            train_no = "%s%d" % (train_type, number_seq[train_type])
-            number_seq[train_type] += 1
+        for direction_index in range(DIRECTIONS_PER_ROUTE):
+            path = (base_path if direction_index == 0
+                    else list(reversed(base_path)))
 
-            hour = (config["start_hour"] + (route_index * 3) % 12 + variant * 6) % 24
-            depart = datetime(2026, 1, 1, hour, (train_id * 17) % 60)
-            speed = float(config["speed"])
-            dwell = config["dwell"]
-            t = depart
-            cum = 0.0
-            total_mileage = sum(distance(path[i], path[i + 1]) for i in range(len(path) - 1))
+            # 每个方向 10 个时段，覆盖一天中的不同出发时间。
+            for variant in range(DEPARTURES_PER_DIRECTION):
+                train_id += 1
+                train_no = "%s%d" % (train_type, number_seq[train_type])
+                number_seq[train_type] += 1
 
-            remark = "国内演示车次 · %s → %s" % (start, end)
-            train_rows.append(
-                "(%d, '%s', '%s', %d, %d, %.1f, 1, '%s')" %
-                (train_id, train_no, train_type, name_to_id[start],
-                 name_to_id[end], total_mileage, remark))
+                hour = (config["start_hour"] + (route_index * 3) % 12
+                        + direction_index * 3 + variant * 2) % 24
+                depart = datetime(2026, 1, 1, hour, (train_id * 17) % 60)
+                speed = float(config["speed"])
+                dwell = config["dwell"]
+                t = depart
+                cum = 0.0
+                total_mileage = sum(
+                    distance(path[i], path[i + 1])
+                    for i in range(len(path) - 1))
 
-            for idx, st_name in enumerate(path):
-                stop_id += 1
-                if idx == 0:
-                    arr_time, arr_off = None, 0
-                else:
-                    d = distance(path[idx - 1], st_name)
-                    cum += d
-                    t = t + timedelta(minutes=max(8, int(d / speed * 60)))
-                    arr_time = t.time()
-                    arr_off = (t.date() - depart.date()).days
+                remark = "国内演示车次 · %s → %s" % (path[0], path[-1])
+                train_rows.append(
+                    "(%d, '%s', '%s', %d, %d, %.1f, 1, '%s')" %
+                    (train_id, train_no, train_type, name_to_id[path[0]],
+                     name_to_id[path[-1]], total_mileage, remark))
 
-                if idx == len(path) - 1:
-                    dep_time, dep_off = None, arr_off
-                else:
-                    dep_off = arr_off
-                    if idx > 0:
-                        t = t + timedelta(minutes=dwell)
-                    dep_time = t.time()
+                for idx, st_name in enumerate(path):
+                    stop_id += 1
+                    if idx == 0:
+                        arr_time, arr_off = None, 0
+                    else:
+                        d = distance(path[idx - 1], st_name)
+                        cum += d
+                        t = t + timedelta(minutes=max(8, int(d / speed * 60)))
+                        arr_time = t.time()
+                        arr_off = (t.date() - depart.date()).days
 
-                stop_rows.append("(%d, %d, %d, %d, %s, %s, %d, %.1f, %d, %d)" % (
-                    stop_id, train_id, idx + 1, name_to_id[st_name],
-                    "'%s'" % arr_time.strftime("%H:%M:%S") if arr_time else "NULL",
-                    "'%s'" % dep_time.strftime("%H:%M:%S") if dep_time else "NULL",
-                    dep_off,
-                    cum,
-                    1 if idx == 0 else 0,
-                    1 if idx == len(path) - 1 else 0,
-                ))
+                    if idx == len(path) - 1:
+                        dep_time, dep_off = None, arr_off
+                    else:
+                        dep_off = arr_off
+                        if idx > 0:
+                            t = t + timedelta(minutes=dwell)
+                        dep_time = t.time()
 
-                # 第 idx 站之后的那一段（最后站没有）
-                if idx < len(path) - 1:
-                    seg_id += 1
-                    seg_mileage = distance(st_name, path[idx + 1])
-                    seg_rows.append("(%d, %d, %d, %d, %d, %d, %d, %.1f)" % (
-                        seg_id, train_id, idx + 1, idx + 1, idx + 2,
-                        name_to_id[st_name], name_to_id[path[idx + 1]], seg_mileage))
+                    stop_rows.append("(%d, %d, %d, %d, %s, %s, %d, %.1f, %d, %d)" % (
+                        stop_id, train_id, idx + 1, name_to_id[st_name],
+                        "'%s'" % arr_time.strftime("%H:%M:%S") if arr_time else "NULL",
+                        "'%s'" % dep_time.strftime("%H:%M:%S") if dep_time else "NULL",
+                        dep_off,
+                        cum,
+                        1 if idx == 0 else 0,
+                        1 if idx == len(path) - 1 else 0,
+                    ))
 
-                    for seat_type in SEAT_TYPES:
-                        price = seg_mileage * config["rates"][seat_type]
-                        price_rows.append("(%d, %d, %d, %.2f)" % (
-                            train_id, idx + 1, seat_type, money(price)))
+                    # 第 idx 站之后的那一段（最后站没有）
+                    if idx < len(path) - 1:
+                        seg_id += 1
+                        seg_mileage = distance(st_name, path[idx + 1])
+                        seg_rows.append("(%d, %d, %d, %d, %d, %d, %d, %.1f)" % (
+                            seg_id, train_id, idx + 1, idx + 1, idx + 2,
+                            name_to_id[st_name],
+                            name_to_id[path[idx + 1]], seg_mileage))
+
+                        for seat_type in SEAT_TYPES:
+                            price = seg_mileage * config["rates"][seat_type]
+                            price_rows.append("(%d, %d, %d, %.2f)" % (
+                                train_id, idx + 1, seat_type, money(price)))
 
     add("-- ========== 车次：%d 趟 ==========" % train_id)
     add("INSERT INTO `train` (`id`, `train_no`, `train_type`, `start_station_id`, "

@@ -96,6 +96,16 @@ public class TrainRouteIndex {
                 new RouteKey(fromStationId, toStationId));
     }
 
+    /**
+     * 索引已就绪时判断站对是否存在可达车次。
+     *
+     * <p>调用方必须先确认 {@link #isReady()}，否则 false 也可能表示
+     * 索引正在构建，而不是该站对真的不可达。
+     */
+    public boolean hasRoute(Long fromStationId, Long toStationId) {
+        return lookup(fromStationId, toStationId) != null;
+    }
+
     public State state() {
         return state.get();
     }

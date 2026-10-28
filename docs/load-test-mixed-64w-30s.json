@@ -1,0 +1,45 @@
+{
+  "timestamp": "2026-10-28T15:44:36+0800",
+  "target": "http://localhost:8080",
+  "scenario": "mixed",
+  "configuredMixPercent": {
+    "search": 90,
+    "orderRoundtrip": 5,
+    "orderList": 3,
+    "payIdempotent": 2
+  },
+  "processes": 4,
+  "workersPerProcess": 16,
+  "totalConcurrency": 64,
+  "configuredDurationSeconds": 30.0,
+  "actualDurationSeconds": 30.082,
+  "httpRequests": 99851,
+  "httpRequestsPerSecond": 3319.27,
+  "logicalOperations": 95092,
+  "successfulOperations": 95092,
+  "failedOperations": 0,
+  "operationsPerSecond": 3161.07,
+  "operationsByType": {
+    "search": 85573,
+    "pay_idempotent": 1906,
+    "order_roundtrip": 4759,
+    "order_list": 2854
+  },
+  "successByType": {
+    "search": 85573,
+    "pay_idempotent": 1906,
+    "order_roundtrip": 4759,
+    "order_list": 2854
+  },
+  "latencyMs": {
+    "avg": 20.03,
+    "p50": 13.69,
+    "p95": 85.77,
+    "p99": 123.44,
+    "max": 235.4
+  },
+  "paidOrderNo": "20261027130823004479446998",
+  "orphanOrderNos": [],
+  "errorCount": 0,
+  "sampleErrors": []
+}
