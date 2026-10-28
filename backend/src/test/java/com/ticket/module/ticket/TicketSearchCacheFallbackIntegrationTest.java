@@ -17,8 +17,10 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 @SpringBootTest(
         webEnvironment = SpringBootTest.WebEnvironment.NONE,
         properties = {
-                "spring.data.redis.port=6390",
-                "spring.data.redis.timeout=300ms"
+                "ticket.redis.port=6390",
+                "ticket.redis.replica-nodes=localhost:6391,localhost:6392",
+                "ticket.redis.command-timeout-ms=300",
+                "ticket.redis.reconcile.enabled=false"
         }
 )
 @Transactional

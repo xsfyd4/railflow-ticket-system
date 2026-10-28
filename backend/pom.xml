@@ -66,13 +66,13 @@
             <version>${mybatis.version}</version>
         </dependency>
 
-        <!-- Redis：官方 starter，默认 Lettuce 客户端，版本由父 POM 管理 -->
+        <!-- Redis：官方 starter，使用 Lettuce 做主从读取路由 -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-data-redis</artifactId>
         </dependency>
 
-        <!-- Redis 同步客户端。项目是同步 Spring MVC，不需要 Lettuce 的异步事件循环。 -->
+        <!-- Jedis：Windows/JDK 23 下比 Lettuce/NIO 稳定；主写连接使用它。 -->
         <dependency>
             <groupId>redis.clients</groupId>
             <artifactId>jedis</artifactId>

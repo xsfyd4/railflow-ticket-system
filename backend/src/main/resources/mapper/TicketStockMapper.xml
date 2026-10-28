@@ -62,6 +62,19 @@
         ORDER BY segment_index
     </select>
 
+    <select id="findForRedisMaintenance"
+            resultType="com.ticket.module.stock.entity.TicketStock">
+        SELECT id, travel_date, train_id, segment_index, seat_type,
+               from_station_id, to_station_id,
+               total_count, sold_count, remaining_count, version, updated_at
+        FROM ticket_stock
+        WHERE travel_date &gt;= #{startDate}
+          AND travel_date &lt; #{endDateExclusive}
+          AND id &gt; #{lastId}
+        ORDER BY id
+        LIMIT #{limit}
+    </select>
+
     <select id="findById" resultType="com.ticket.module.stock.vo.StockVO">
         SELECT <include refid="voColumns"/>
         FROM ticket_stock s

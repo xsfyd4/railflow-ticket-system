@@ -25,16 +25,6 @@ spring:
       connection-timeout: 5000   # 5 秒连不上就报错，别一直卡着
 
   # ----------------------------------------------------------
-  #  Redis（Docker 容器：6379）
-  # ----------------------------------------------------------
-  data:
-    redis:
-      host: localhost
-      port: 6379
-      client-type: jedis
-      timeout: 3s                # 连不上就 3 秒报错，别把接口卡死
-
-  # ----------------------------------------------------------
   #  RabbitMQ（5672 是通信端口，15672 是管理界面）
   # ----------------------------------------------------------
   rabbitmq:
@@ -71,6 +61,40 @@ logging:
 #  JWT 配置（阶段 2 新增）
 # ------------------------------------------------------------
 ticket:
+  redis:
+    # 本机自动化测试使用 standalone；Docker 环境通过环境变量切到 sentinel。
+    mode: ${TICKET_REDIS_MODE:standalone}
+    host: ${TICKET_REDIS_HOST:localhost}
+    port: ${TICKET_REDIS_PORT:6380}
+    master: ${TICKET_REDIS_MASTER:mymaster}
+    sentinel-nodes: ${TICKET_REDIS_SENTINEL_NODES:localhost:26379}
+    # standalone 测试使用两个副本端口；sentinel 模式通过 Sentinel 自动发现。
+    replica-nodes:
+      - localhost:6381
+      - localhost:6382
+    password: ${TICKET_REDIS_PASSWORD:}
+    command-timeout-ms: 3000
+    idempotency-processing-ttl-seconds: 600
+    idempotency-success-ttl-seconds: 604800
+    idempotency-failed-ttl-seconds: 86400
+    maintenance:
+      batch-size: 500
+      max-rows-per-run: 5000
+    warmup:
+      # Docker 运行环境通过环境变量开启，自动化测试默认不启动大范围预热。
+      enabled: ${TICKET_REDIS_WARMUP_ENABLED:false}
+      initial-delay-ms: 20000
+      interval-ms: 3600000
+      stock-days: 7
+      max-routes: 40
+      days: 2
+      page-size: 10
+    reconcile:
+      # 部署时开启；自动化测试默认关闭，避免后台任务与测试数据互相干扰。
+      enabled: ${TICKET_REDIS_RECONCILE_ENABLED:false}
+      initial-delay-ms: 60000
+      interval-ms: 300000
+      days: 3
   cache:
     enabled: true
     # 查票结果缓存时间。库存变化会通过版本号立即失效。

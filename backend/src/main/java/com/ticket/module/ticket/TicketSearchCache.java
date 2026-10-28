@@ -1,6 +1,7 @@
 package com.ticket.module.ticket;
 
 import com.ticket.common.result.PageResult;
+import com.ticket.config.ReplicaRedisReader;
 import com.ticket.module.ticket.dto.TicketSearchDTO;
 import com.ticket.module.ticket.vo.TicketVO;
 import io.micrometer.core.instrument.Counter;
@@ -8,9 +9,9 @@ import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
-import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.ObjectMapper;
 
 import java.time.Duration;
@@ -30,11 +31,8 @@ public class TicketSearchCache {
             LoggerFactory.getLogger("com.ticket.redis.TicketSearchCache");
     private static final String GLOBAL_VERSION_KEY = "ticket:search:version:global";
     private static final String DATE_VERSION_KEY = "ticket:search:version:date:";
-    private static final TypeReference<PageResult<TicketVO>> RESULT_TYPE =
-            new TypeReference<>() {
-            };
-
-    private final StringRedisTemplate redis;
+    private final StringRedisTemplate writeRedis;
+    private final ReplicaRedisReader replicaReader;
     private final ObjectMapper objectMapper;
     private final Duration ttl;
     private final boolean enabled;
@@ -44,12 +42,14 @@ public class TicketSearchCache {
     private final Counter errors;
 
     public TicketSearchCache(
-            StringRedisTemplate redis,
+            @Qualifier("writeRedisTemplate") StringRedisTemplate writeRedis,
+            ReplicaRedisReader replicaReader,
             ObjectMapper objectMapper,
             MeterRegistry meterRegistry,
             @Value("${ticket.cache.enabled:true}") boolean enabled,
             @Value("${ticket.cache.search-ttl-seconds:10}") long ttlSeconds) {
-        this.redis = redis;
+        this.writeRedis = writeRedis;
+        this.replicaReader = replicaReader;
         this.objectMapper = objectMapper;
         this.enabled = enabled;
         this.ttl = Duration.ofSeconds(Math.max(1, ttlSeconds));
@@ -65,7 +65,7 @@ public class TicketSearchCache {
             return CacheToken.disabled();
         }
         try {
-            List<String> values = redis.opsForValue().multiGet(
+            List<String> values = writeRedis.opsForValue().multiGet(
                     List.of(GLOBAL_VERSION_KEY, dateVersionKey(travelDate)));
             long global = parseVersion(values == null? null : values.get(0));
             long date = parseVersion(values == null? null : values.get(1));
@@ -83,18 +83,19 @@ public class TicketSearchCache {
         }
         String key = key(query, token);
         try {
-            String json = redis.opsForValue().get(key);
+            String json = getFromReplicaThenMaster(key);
             if (json == null) {
                 misses.increment();
                 return null;
             }
-            PageResult<TicketVO> result =
-                    objectMapper.readValue(json, RESULT_TYPE);
+            TicketSearchSnapshot snapshot =
+                    objectMapper.readValue(json, TicketSearchSnapshot.class);
+            PageResult<TicketVO> result = snapshot.toPageResult();
             hits.increment();
             return result;
         } catch (Exception e) {
             errors.increment();
-            log.warn("读取查票缓存失败，将降级查询 MySQL：{}", e.getMessage());
+            log.warn("读取查票读模型失败，将降级查询 MySQL：{}", e.getMessage());
             safeDelete(key);
             return null;
         }
@@ -107,9 +108,11 @@ public class TicketSearchCache {
             return;
         }
         try {
-            redis.opsForValue().set(
+            String json = objectMapper.writeValueAsString(
+                    TicketSearchSnapshot.from(result));
+            writeRedis.opsForValue().set(
                     key(query, token),
-                    objectMapper.writeValueAsString(result),
+                    json,
                     ttl);
             writes.increment();
         } catch (Exception e) {
@@ -125,8 +128,8 @@ public class TicketSearchCache {
         }
         try {
             String key = dateVersionKey(travelDate);
-            redis.opsForValue().increment(key);
-            redis.expire(key, Duration.ofDays(60));
+            writeRedis.opsForValue().increment(key);
+            writeRedis.expire(key, Duration.ofDays(60));
             log.info("查票缓存已失效，travelDate={}", travelDate);
         } catch (Exception e) {
             errors.increment();
@@ -140,7 +143,7 @@ public class TicketSearchCache {
             return;
         }
         try {
-            redis.opsForValue().increment(GLOBAL_VERSION_KEY);
+            writeRedis.opsForValue().increment(GLOBAL_VERSION_KEY);
             log.info("查票缓存全局版本已递增");
         } catch (Exception e) {
             errors.increment();
@@ -178,10 +181,27 @@ public class TicketSearchCache {
 
     private void safeDelete(String key) {
         try {
-            redis.delete(key);
+            writeRedis.delete(key);
         } catch (Exception ignored) {
             // 缓存清理失败不能影响数据库回源。
         }
+    }
+
+    /**
+     * 正常从两个副本中选一个读取；副本连接失败时再读主节点。
+     * 新版本 Key 尚未复制时返回 null，业务会回源 MySQL 并把结果写回主节点。
+     */
+    private String getFromReplicaThenMaster(String key) {
+        try {
+            String value = replicaReader.get(key);
+            if (value != null) {
+                return value;
+            }
+        } catch (Exception replicaError) {
+            log.warn("读取查票副本失败，尝试主节点：{}",
+                    replicaError.getMessage());
+        }
+        return writeRedis.opsForValue().get(key);
     }
 
     public record CacheToken(boolean enabled,

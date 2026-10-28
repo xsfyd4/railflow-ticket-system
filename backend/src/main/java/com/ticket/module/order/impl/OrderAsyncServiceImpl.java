@@ -2,6 +2,8 @@ package com.ticket.module.order.impl;
 
 import com.ticket.common.exception.BizException;
 import com.ticket.common.result.ResultCode;
+import com.ticket.module.order.IdempotencyHash;
+import com.ticket.module.order.RedisIdempotencyStore;
 import com.ticket.module.order.dto.CreateOrderDTO;
 import com.ticket.module.order.entity.OrderRequest;
 import com.ticket.module.order.mapper.OrderMapper;
@@ -42,6 +44,7 @@ public class OrderAsyncServiceImpl {
     private final AsyncOrderPublisher publisher;
     private final OrderRequestFailureService failureService;
     private final ObjectMapper objectMapper;
+    private final RedisIdempotencyStore idempotencyStore;
 
     public OrderAsyncServiceImpl(
             OrderRequestMapper requestMapper,
@@ -50,7 +53,8 @@ public class OrderAsyncServiceImpl {
             TicketStockCache stockCache,
             AsyncOrderPublisher publisher,
             OrderRequestFailureService failureService,
-            ObjectMapper objectMapper) {
+            ObjectMapper objectMapper,
+            RedisIdempotencyStore idempotencyStore) {
         this.requestMapper = requestMapper;
         this.orderMapper = orderMapper;
         this.passengerMapper = passengerMapper;
@@ -58,16 +62,47 @@ public class OrderAsyncServiceImpl {
         this.publisher = publisher;
         this.failureService = failureService;
         this.objectMapper = objectMapper;
+        this.idempotencyStore = idempotencyStore;
     }
 
     public AsyncOrderVO submit(String idempotencyKey, CreateOrderDTO dto) {
         Long userId = currentUserId();
         String requestId = normalizeRequestId(idempotencyKey);
+        String requestHash = IdempotencyHash.createOrder(userId, dto);
         RequestPlan plan = validateAndBuildPlan(userId, dto);
 
         OrderRequest existing = requestMapper.findByRequestId(requestId);
         if (existing != null) {
-            return replayExisting(existing, userId, plan);
+            return replayExisting(existing, userId, dto);
+        }
+
+        RedisIdempotencyStore.AcquireResult gate =
+                idempotencyStore.acquireAfterDatabaseMiss(
+                        "ORDER", requestId, userId, requestHash);
+        if (gate.status()
+                == RedisIdempotencyStore.Status.CONFLICT) {
+            throw new BizException(ResultCode.ASYNC_REQUEST_CONFLICT);
+        }
+        if (gate.status()
+                == RedisIdempotencyStore.Status.PROCESSING) {
+            throw new BizException(
+                    ResultCode.ORDER_IDEMPOTENCY_PROCESSING);
+        }
+        if (gate.status()
+                == RedisIdempotencyStore.Status.REPLAY) {
+            OrderRequest winner = requestMapper.findByRequestId(requestId);
+            if (winner != null) {
+                return replayExisting(winner, userId, dto);
+            }
+            gate = idempotencyStore.acquireAfterDatabaseMiss(
+                    "ORDER", requestId, userId, requestHash);
+            if (gate.status()
+                    != RedisIdempotencyStore.Status.ACQUIRED
+                    && gate.status()
+                    != RedisIdempotencyStore.Status.UNAVAILABLE) {
+                throw new BizException(
+                        ResultCode.ORDER_IDEMPOTENCY_PROCESSING);
+            }
         }
 
         OrderRequest request = buildRequest(requestId, userId, dto, plan);
@@ -77,9 +112,14 @@ public class OrderAsyncServiceImpl {
             // 两个相同幂等键并发提交时，只有一个能 INSERT 成功。
             OrderRequest winner = requestMapper.findByRequestId(requestId);
             if (winner == null) {
+                idempotencyStore.markFailed(
+                        "ORDER", requestId, gate.ownerToken(),
+                        "异步请求幂等键冲突但没有找到赢家");
                 throw duplicate;
             }
-            return replayExisting(winner, userId, plan);
+            idempotencyStore.markSuccess(
+                    "ORDER", requestId, gate.ownerToken(), requestId);
+            return replayExisting(winner, userId, dto);
         }
 
         TicketStockCache.ReserveResult reserveResult =
@@ -94,24 +134,38 @@ public class OrderAsyncServiceImpl {
         if (reserveResult == TicketStockCache.ReserveResult.UNAVAILABLE) {
             failureService.fail(requestId,
                     ResultCode.ASYNC_REDIS_UNAVAILABLE.getMsg());
+            idempotencyStore.markFailed(
+                    "ORDER", requestId, gate.ownerToken(),
+                    ResultCode.ASYNC_REDIS_UNAVAILABLE.getMsg());
             throw new BizException(ResultCode.ASYNC_REDIS_UNAVAILABLE);
         }
         if (reserveResult == TicketStockCache.ReserveResult.NOT_ENOUGH) {
             failureService.fail(requestId,
+                    ResultCode.TICKET_NOT_ENOUGH.getMsg());
+            idempotencyStore.markFailed(
+                    "ORDER", requestId, gate.ownerToken(),
                     ResultCode.TICKET_NOT_ENOUGH.getMsg());
             throw new BizException(ResultCode.TICKET_NOT_ENOUGH);
         }
 
         int queued = requestMapper.markQueued(requestId);
         if (queued != 1) {
+            idempotencyStore.markFailed(
+                    "ORDER", requestId, gate.ownerToken(),
+                    "异步请求状态已经变化");
             throw new BizException(ResultCode.ASYNC_REQUEST_CONFLICT);
         }
 
         try {
             publisher.publish(requestId);
             requestMapper.markPublished(requestId, LocalDateTime.now());
+            idempotencyStore.markSuccess(
+                    "ORDER", requestId, gate.ownerToken(), requestId);
         } catch (RuntimeException e) {
             failureService.fail(requestId, e.getMessage());
+            idempotencyStore.markFailed(
+                    "ORDER", requestId, gate.ownerToken(),
+                    e.getMessage());
             if (e instanceof BizException bizException) {
                 throw bizException;
             }
@@ -135,24 +189,26 @@ public class OrderAsyncServiceImpl {
 
     private AsyncOrderVO replayExisting(OrderRequest existing,
                                         Long userId,
-                                        RequestPlan plan) {
+                                        CreateOrderDTO dto) {
         if (!existing.getUserId().equals(userId)) {
             throw new BizException(ResultCode.ASYNC_REQUEST_CONFLICT);
         }
-        boolean sameRequest =
-                existing.getTrainId().equals(plan.trainId())
-                && existing.getTravelDate().equals(plan.travelDate())
-                && existing.getSeatType().equals(plan.seatType())
-                && existing.getFromSegmentIndex()
-                        .equals(plan.fromSegmentIndex())
-                && existing.getToSegmentIndex()
-                        .equals(plan.toSegmentIndex())
-                && existing.getPassengerCount()
-                        .equals(plan.passengerCount());
+        boolean sameRequest = requestHash(existing, userId)
+                .equals(IdempotencyHash.createOrder(userId, dto));
         if (!sameRequest) {
             throw new BizException(ResultCode.ASYNC_REQUEST_CONFLICT);
         }
         return toVO(existing);
+    }
+
+    private String requestHash(OrderRequest request, Long userId) {
+        try {
+            CreateOrderDTO stored = objectMapper.readValue(
+                    request.getPayloadJson(), CreateOrderDTO.class);
+            return IdempotencyHash.createOrder(userId, stored);
+        } catch (Exception e) {
+            throw new BizException(ResultCode.ASYNC_REQUEST_CONFLICT);
+        }
     }
 
     private RequestPlan validateAndBuildPlan(Long userId,

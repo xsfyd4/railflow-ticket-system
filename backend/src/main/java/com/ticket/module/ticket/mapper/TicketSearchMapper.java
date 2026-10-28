@@ -29,4 +29,10 @@ public interface TicketSearchMapper {
     /** 这些车次的"每席别"余票和票价（已按区间取 MIN / SUM） */
     List<TicketSeatRow> findSeatRows(@Param("q") TicketSearchDTO q,
                                      @Param("trainIds") List<Long> trainIds);
+
+    /**
+     * 从停站关系抽取有方向的站对，作为查票对象预热的候选线路。
+     */
+    List<TicketSearchDTO> findWarmupStationPairs(
+            @Param("limit") int limit);
 }

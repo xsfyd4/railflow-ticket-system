@@ -3,6 +3,8 @@ package com.ticket.module.order.impl;
 import com.ticket.common.exception.BizException;
 import com.ticket.common.result.ResultCode;
 import com.ticket.module.order.OrderService;
+import com.ticket.module.order.IdempotencyHash;
+import com.ticket.module.order.RedisIdempotencyStore;
 import com.ticket.module.order.dto.CreateOrderDTO;
 import com.ticket.module.order.entity.TicketOrder;
 import com.ticket.module.order.mapper.OrderMapper;
@@ -11,6 +13,10 @@ import com.ticket.security.LoginUser;
 import com.ticket.security.LoginUserContext;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
+
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 
 /**
  * 同步下单的幂等入口。
@@ -32,11 +38,14 @@ public class OrderCreateService {
 
     private final OrderService orderService;
     private final OrderMapper orderMapper;
+    private final RedisIdempotencyStore idempotencyStore;
 
     public OrderCreateService(OrderService orderService,
-                              OrderMapper orderMapper) {
+                              OrderMapper orderMapper,
+                              RedisIdempotencyStore idempotencyStore) {
         this.orderService = orderService;
         this.orderMapper = orderMapper;
+        this.idempotencyStore = idempotencyStore;
     }
 
     /**
@@ -45,6 +54,7 @@ public class OrderCreateService {
     public CreateOrderVO submit(String idempotencyKey, CreateOrderDTO dto) {
         String requestId = normalizeRequestId(idempotencyKey);
         Long userId = currentUserId();
+        String requestHash = IdempotencyHash.createOrder(userId, dto);
 
         // 快速路径：已经下过单，直接返回同一张订单
         TicketOrder existing = orderMapper.findByRequestId(requestId);
@@ -52,15 +62,67 @@ public class OrderCreateService {
             return replay(existing, userId, dto);
         }
 
+        /*
+         * Redis 是快速闸门：并发同键只有一个 owner 进入 MySQL 事务。
+         * 数据库没有结果时才允许 reclaim，避免 Redis 残留 SUCCESS
+         * 在测试库重建或手工删单后永久挡住同一个 Key。
+         */
+        RedisIdempotencyStore.AcquireResult gate =
+                idempotencyStore.acquireAfterDatabaseMiss(
+                        "ORDER", requestId, userId, requestHash);
+        if (gate.status()
+                == RedisIdempotencyStore.Status.CONFLICT) {
+            throw new BizException(
+                    ResultCode.ORDER_IDEMPOTENCY_CONFLICT);
+        }
+        if (gate.status()
+                == RedisIdempotencyStore.Status.PROCESSING) {
+            throw new BizException(
+                    ResultCode.ORDER_IDEMPOTENCY_PROCESSING);
+        }
+        if (gate.status()
+                == RedisIdempotencyStore.Status.REPLAY) {
+            TicketOrder winner = orderMapper.findByRequestId(requestId);
+            if (winner == null) {
+                gate = idempotencyStore.acquireAfterDatabaseMiss(
+                        "ORDER", requestId, userId, requestHash);
+                if (gate.status()
+                        != RedisIdempotencyStore.Status.ACQUIRED
+                        && gate.status()
+                        != RedisIdempotencyStore.Status.UNAVAILABLE) {
+                    throw new BizException(
+                            ResultCode.ORDER_IDEMPOTENCY_PROCESSING);
+                }
+            } else {
+                return replay(winner, userId, dto);
+            }
+        }
+
         try {
-            return orderService.createWithRequestId(dto, requestId);
+            CreateOrderVO result =
+                    orderService.createWithRequestId(dto, requestId);
+            idempotencyStore.markSuccess(
+                    "ORDER", requestId, gate.ownerToken(),
+                    result.getOrderNo());
+            return result;
         } catch (DuplicateKeyException duplicate) {
             // 并发竞态：另一个请求先提交了同一个幂等键
             TicketOrder winner = orderMapper.findByRequestId(requestId);
             if (winner == null) {
+                idempotencyStore.markFailed(
+                        "ORDER", requestId, gate.ownerToken(),
+                        "数据库幂等键冲突但没有找到赢家订单");
                 throw duplicate;
             }
+            idempotencyStore.markSuccess(
+                    "ORDER", requestId, gate.ownerToken(),
+                    winner.getOrderNo());
             return replay(winner, userId, dto);
+        } catch (RuntimeException e) {
+            idempotencyStore.markFailed(
+                    "ORDER", requestId, gate.ownerToken(),
+                    e.getMessage());
+            throw e;
         }
     }
 
@@ -79,6 +141,15 @@ public class OrderCreateService {
                 && order.getSeatType().equals(dto.getSeatType())
                 && order.getPassengerCount()
                         .equals(dto.getPassengerIds().size());
+        if (sameRequest) {
+            List<Long> savedPassengerIds = new ArrayList<>(
+                    orderMapper.findPassengerIdsByOrderId(order.getId()));
+            List<Long> requestedPassengerIds =
+                    new ArrayList<>(dto.getPassengerIds());
+            Collections.sort(savedPassengerIds);
+            Collections.sort(requestedPassengerIds);
+            sameRequest = savedPassengerIds.equals(requestedPassengerIds);
+        }
         if (!sameRequest) {
             throw new BizException(ResultCode.ORDER_IDEMPOTENCY_CONFLICT);
         }

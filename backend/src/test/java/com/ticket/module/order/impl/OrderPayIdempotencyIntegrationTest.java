@@ -19,6 +19,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -423,6 +424,11 @@ class OrderPayIdempotencyIntegrationTest {
                     TEST_DATE, TRAIN_ID, SEAT_TYPE, segment));
         }
         redis.delete(stockKeys);
+        Set<String> idempotencyKeys =
+                redis.keys("ticket:pay:idempotency:*");
+        if (idempotencyKeys != null && !idempotencyKeys.isEmpty()) {
+            redis.delete(idempotencyKeys);
+        }
     }
 
     private record UserPassenger(Long userId, Long passengerId) {

@@ -62,6 +62,9 @@ public interface OrderMapper {
 
     List<OrderItemVO> findItemsByOrderId(@Param("orderId") Long orderId);
 
+    /** 只供服务端幂等摘要比较，不把乘车人 id 暴露到响应 VO。 */
+    List<Long> findPassengerIdsByOrderId(@Param("orderId") Long orderId);
+
     /** 锁定一行订单，防止支付和取消并发执行。 */
     TicketOrder findByOrderNoAndUserForUpdate(
             @Param("orderNo") String orderNo,

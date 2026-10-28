@@ -9,6 +9,7 @@ import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.Cursor;
 import org.springframework.data.redis.core.ScanOptions;
@@ -41,6 +42,8 @@ public class TicketStockCache {
      * 会落在同一个 slot，Lua 才能一次原子操作多段库存。
      */
     private static final String KEY_PREFIX = "ticket:stock:";
+    private static final String RECONCILE_LOCK_PREFIX =
+            "ticket:stock-reconcile:{";
 
     /**
      * 所有 Key 都存在且都够票才扣减。
@@ -49,13 +52,16 @@ public class TicketStockCache {
     private static final DefaultRedisScript<Long> RESERVE_SCRIPT =
             new DefaultRedisScript<>("""
                     local count = tonumber(ARGV[1])
-                    for i = 1, #KEYS do
+                    if redis.call('EXISTS', KEYS[1]) == 1 then
+                        return -2
+                    end
+                    for i = 2, #KEYS do
                         local remain = tonumber(redis.call('GET', KEYS[i]))
                         if not remain or remain < count then
                             return 0
                         end
                     end
-                    for i = 1, #KEYS do
+                    for i = 2, #KEYS do
                         redis.call('DECRBY', KEYS[i], count)
                     end
                     return 1
@@ -68,15 +74,26 @@ public class TicketStockCache {
     private static final DefaultRedisScript<Long> ADJUST_SCRIPT =
             new DefaultRedisScript<>("""
                     local delta = tonumber(ARGV[1])
-                    for i = 1, #KEYS do
+                    if redis.call('EXISTS', KEYS[1]) == 1 then
+                        return -2
+                    end
+                    for i = 2, #KEYS do
                         if redis.call('EXISTS', KEYS[i]) == 0 then
                             return -1
                         end
                     end
-                    for i = 1, #KEYS do
+                    for i = 2, #KEYS do
                         redis.call('INCRBY', KEYS[i], delta)
                     end
                     return 1
+                    """, Long.class);
+
+    private static final DefaultRedisScript<Long> RELEASE_LOCK_SCRIPT =
+            new DefaultRedisScript<>("""
+                    if redis.call('GET', KEYS[1]) == ARGV[1] then
+                        return redis.call('DEL', KEYS[1])
+                    end
+                    return 0
                     """, Long.class);
 
     private final StringRedisTemplate redis;
@@ -88,6 +105,7 @@ public class TicketStockCache {
     private final Counter unavailable;
 
     public TicketStockCache(
+            @Qualifier("writeRedisTemplate")
             StringRedisTemplate redis,
             TicketStockMapper stockMapper,
             MeterRegistry meterRegistry,
@@ -125,7 +143,9 @@ public class TicketStockCache {
         List<String> keys = rows.stream()
                 .map(row -> key(travelDate, trainId, seatType,
                         row.getSegmentIndex()))
-                .toList();
+                .collect(java.util.stream.Collectors.toCollection(
+                        ArrayList::new));
+        keys.add(0, reconcileLockKey(travelDate, trainId));
 
         try {
             /*
@@ -146,6 +166,12 @@ public class TicketStockCache {
             if (result != null && result == 1L) {
                 reserved.increment();
                 return ReserveResult.RESERVED;
+            }
+            if (result != null && result == -2L) {
+                unavailable.increment();
+                log.info("库存正在对账，暂缓预扣，date={}，trainId={}",
+                        travelDate, trainId);
+                return ReserveResult.UNAVAILABLE;
             }
             rejected.increment();
             return ReserveResult.NOT_ENOUGH;
@@ -249,6 +275,87 @@ public class TicketStockCache {
                 + ":" + seatType + ":" + segmentIndex;
     }
 
+    public boolean warmupIfAbsent(TicketStock row) {
+        if (!enabled || row == null) {
+            return false;
+        }
+        try {
+            Boolean created = redis.opsForValue().setIfAbsent(
+                    key(row.getTravelDate(), row.getTrainId(),
+                            row.getSeatType(), row.getSegmentIndex()),
+                    String.valueOf(row.getRemainingCount()),
+                    stockTtl(row.getTravelDate()));
+            return Boolean.TRUE.equals(created);
+        } catch (Exception e) {
+            unavailable.increment();
+            log.warn("预热分段库存失败，date={}，trainId={}，segment={}：{}",
+                    row.getTravelDate(), row.getTrainId(),
+                    row.getSegmentIndex(), e.getMessage());
+            return false;
+        }
+    }
+
+    public String readRemaining(TicketStock row) {
+        try {
+            return redis.opsForValue().get(key(
+                    row.getTravelDate(),
+                    row.getTrainId(),
+                    row.getSeatType(),
+                    row.getSegmentIndex()));
+        } catch (Exception e) {
+            unavailable.increment();
+            return null;
+        }
+    }
+
+    public boolean writeExact(TicketStock row) {
+        try {
+            redis.opsForValue().set(
+                    key(row.getTravelDate(), row.getTrainId(),
+                            row.getSeatType(), row.getSegmentIndex()),
+                    String.valueOf(row.getRemainingCount()),
+                    stockTtl(row.getTravelDate()));
+            return true;
+        } catch (Exception e) {
+            unavailable.increment();
+            log.warn("对账修复分段库存失败，date={}，trainId={}，segment={}：{}",
+                    row.getTravelDate(), row.getTrainId(),
+                    row.getSegmentIndex(), e.getMessage());
+            return false;
+        }
+    }
+
+    public String acquireReconcileLease(LocalDate travelDate,
+                                        Long trainId,
+                                        String ownerToken,
+                                        Duration lease) {
+        try {
+            Boolean acquired = redis.opsForValue().setIfAbsent(
+                    reconcileLockKey(travelDate, trainId),
+                    ownerToken, lease);
+            return Boolean.TRUE.equals(acquired) ? ownerToken : null;
+        } catch (Exception e) {
+            unavailable.increment();
+            return null;
+        }
+    }
+
+    public void releaseReconcileLease(LocalDate travelDate,
+                                      Long trainId,
+                                      String ownerToken) {
+        if (ownerToken == null) {
+            return;
+        }
+        try {
+            redis.execute(RELEASE_LOCK_SCRIPT,
+                    List.of(reconcileLockKey(travelDate, trainId)),
+                    ownerToken);
+        } catch (Exception e) {
+            log.warn("释放库存对账租约失败，date={}，trainId={}：{}",
+                    travelDate, trainId, e.getMessage());
+        }
+    }
+
     private void adjustOrRefresh(LocalDate travelDate,
                                  Long trainId,
                                  Integer seatType,
@@ -265,9 +372,15 @@ public class TicketStockCache {
                  segment++) {
                 keys.add(key(travelDate, trainId, seatType, segment));
             }
+            keys.add(0, reconcileLockKey(travelDate, trainId));
             Long result = redis.execute(
                     ADJUST_SCRIPT, keys, String.valueOf(delta));
             if (result != null && result == 1L) {
+                return;
+            }
+            if (result != null && result == -2L) {
+                log.info("库存正在对账，跳过本次增量同步，date={}，trainId={}，delta={}",
+                        travelDate, trainId, delta);
                 return;
             }
             /*
@@ -338,6 +451,10 @@ public class TicketStockCache {
                 .atTime(23, 59, 59);
         Duration configured = Duration.between(LocalDateTime.now(), expireAt);
         return configured.compareTo(ttl) > 0 ? configured : ttl;
+    }
+
+    private String reconcileLockKey(LocalDate travelDate, Long trainId) {
+        return RECONCILE_LOCK_PREFIX + travelDate + ":" + trainId + "}";
     }
 
     private void runAfterCommit(Runnable action) {

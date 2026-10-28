@@ -47,4 +47,12 @@ public interface OrderRequestMapper {
     List<OrderRequest> findStaleActive(
             @Param("updatedBefore") LocalDateTime updatedBefore,
             @Param("limit") int limit);
+
+    /**
+     * 对账前检查当天车次是否仍有未完成的异步预扣。
+     * status 0=已提交，1=已预扣待投递，2=消费中。
+     */
+    int countActiveReservations(
+            @Param("travelDate") java.time.LocalDate travelDate,
+            @Param("trainId") Long trainId);
 }

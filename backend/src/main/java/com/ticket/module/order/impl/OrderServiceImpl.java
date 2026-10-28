@@ -4,6 +4,8 @@ import com.ticket.common.exception.BizException;
 import com.ticket.common.result.PageResult;
 import com.ticket.common.result.ResultCode;
 import com.ticket.module.order.OrderService;
+import com.ticket.module.order.IdempotencyHash;
+import com.ticket.module.order.RedisIdempotencyStore;
 import com.ticket.module.order.dto.CreateOrderDTO;
 import com.ticket.module.order.dto.OrderQueryDTO;
 import com.ticket.module.order.dto.PayOrderDTO;
@@ -116,6 +118,7 @@ public class OrderServiceImpl implements OrderService {
 
     /** 同步 HTTP 下单成功后，把 Redis 数字库存同步减掉。 */
     private final TicketStockCache stockCache;
+    private final RedisIdempotencyStore idempotencyStore;
 
     /**
      * 构造器注入。
@@ -128,13 +131,15 @@ public class OrderServiceImpl implements OrderService {
                             PayLogMapper payLogMapper,
                             OrderPayTxService payTxService,
                             TicketCacheInvalidator cacheInvalidator,
-                            TicketStockCache stockCache) {
+                            TicketStockCache stockCache,
+                            RedisIdempotencyStore idempotencyStore) {
         this.orderMapper = orderMapper;
         this.passengerMapper = passengerMapper;
         this.payLogMapper = payLogMapper;
         this.payTxService = payTxService;
         this.cacheInvalidator = cacheInvalidator;
         this.stockCache = stockCache;
+        this.idempotencyStore = idempotencyStore;
     }
 
     /**
@@ -403,6 +408,29 @@ public class OrderServiceImpl implements OrderService {
         Long userId = currentUserId();
         String requestId = resolveRequestId(idempotencyKey, dto, userId, orderNo);
         String channel = resolveChannel(dto);
+        String requestHash = IdempotencyHash.payOrder(
+                userId, orderNo, channel);
+
+        PayLog existing = payLogMapper.findByRequestId(requestId);
+        if (existing != null) {
+            return replayExisting(userId, orderNo, requestId);
+        }
+
+        RedisIdempotencyStore.AcquireResult gate =
+                idempotencyStore.acquireAfterDatabaseMiss(
+                        "PAY", requestId, userId, requestHash);
+        if (gate.status()
+                == RedisIdempotencyStore.Status.CONFLICT) {
+            throw new BizException(ResultCode.PAY_REQUEST_CONFLICT);
+        }
+        if (gate.status()
+                == RedisIdempotencyStore.Status.PROCESSING) {
+            throw new BizException(ResultCode.PAY_PROCESSING);
+        }
+        if (gate.status()
+                == RedisIdempotencyStore.Status.REPLAY) {
+            return replayExisting(userId, orderNo, requestId);
+        }
 
         PayLog attempt;
         try {
@@ -414,7 +442,11 @@ public class OrderServiceImpl implements OrderService {
         }
 
         try {
-            return payTxService.complete(attempt);
+            OrderActionResultVO result = payTxService.complete(attempt);
+            idempotencyStore.markSuccess(
+                    "PAY", requestId, gate.ownerToken(),
+                    result.getPayNo());
+            return result;
         } catch (RuntimeException e) {
             try {
                 payTxService.fail(
@@ -422,6 +454,8 @@ public class OrderServiceImpl implements OrderService {
             } catch (RuntimeException ignore) {
                 // 写失败原因本身失败时，不能掩盖原始业务异常
             }
+            idempotencyStore.markFailed(
+                    "PAY", requestId, gate.ownerToken(), e.getMessage());
             throw e;
         }
     }

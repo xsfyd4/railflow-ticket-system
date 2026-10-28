@@ -1,0 +1,207 @@
+name: train-ticket-redis-ha
+
+services:
+  redis-master:
+    image: redis:7.4
+    container_name: redis-master
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --appendfsync
+      - everysec
+      - --save
+      - "900 1"
+    ports:
+      - "6380:6379"
+    volumes:
+      - redis-master-data:/data
+    networks:
+      train-ticket-net:
+        ipv4_address: 172.18.0.20
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "6379", "PING"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  redis-replica-1:
+    image: redis:7.4
+    container_name: redis-replica-1
+    command:
+      - redis-server
+      - --replicaof
+      - redis-master
+      - "6379"
+      - --appendonly
+      - "yes"
+      - --appendfsync
+      - everysec
+      - --replica-read-only
+      - "yes"
+    ports:
+      - "6381:6379"
+    depends_on:
+      redis-master:
+        condition: service_healthy
+    volumes:
+      - redis-replica-1-data:/data
+    networks:
+      train-ticket-net:
+        ipv4_address: 172.18.0.21
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "6379", "PING"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  redis-replica-2:
+    image: redis:7.4
+    container_name: redis-replica-2
+    command:
+      - redis-server
+      - --replicaof
+      - redis-master
+      - "6379"
+      - --appendonly
+      - "yes"
+      - --appendfsync
+      - everysec
+      - --replica-read-only
+      - "yes"
+    ports:
+      - "6382:6379"
+    depends_on:
+      redis-master:
+        condition: service_healthy
+    volumes:
+      - redis-replica-2-data:/data
+    networks:
+      train-ticket-net:
+        ipv4_address: 172.18.0.22
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "6379", "PING"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  redis-sentinel-1:
+    image: redis:7.4
+    container_name: redis-sentinel-1
+    command:
+      - /bin/sh
+      - -c
+      - |
+        if [ ! -f /data/sentinel.conf ]; then
+          cp /etc/redis-template/sentinel.conf /data/sentinel.conf
+        fi
+        exec redis-server /data/sentinel.conf --sentinel
+    ports:
+      - "26379:26379"
+    depends_on:
+      redis-master:
+        condition: service_healthy
+      redis-replica-1:
+        condition: service_healthy
+      redis-replica-2:
+        condition: service_healthy
+    volumes:
+      - ./sentinel/sentinel-1.conf:/etc/redis-template/sentinel.conf:ro
+      - redis-sentinel-1-data:/data
+    networks:
+      train-ticket-net:
+        ipv4_address: 172.18.0.23
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - redis-cli -p 26379 sentinel get-master-addr-by-name mymaster | head -n 1 | grep -Eq '^172\.18\.0\.(20|21|22)$'
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  redis-sentinel-2:
+    image: redis:7.4
+    container_name: redis-sentinel-2
+    command:
+      - /bin/sh
+      - -c
+      - |
+        if [ ! -f /data/sentinel.conf ]; then
+          cp /etc/redis-template/sentinel.conf /data/sentinel.conf
+        fi
+        exec redis-server /data/sentinel.conf --sentinel
+    ports:
+      - "26380:26379"
+    depends_on:
+      redis-master:
+        condition: service_healthy
+      redis-replica-1:
+        condition: service_healthy
+      redis-replica-2:
+        condition: service_healthy
+    volumes:
+      - ./sentinel/sentinel-2.conf:/etc/redis-template/sentinel.conf:ro
+      - redis-sentinel-2-data:/data
+    networks:
+      train-ticket-net:
+        ipv4_address: 172.18.0.24
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - redis-cli -p 26379 sentinel get-master-addr-by-name mymaster | head -n 1 | grep -Eq '^172\.18\.0\.(20|21|22)$'
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  redis-sentinel-3:
+    image: redis:7.4
+    container_name: redis-sentinel-3
+    command:
+      - /bin/sh
+      - -c
+      - |
+        if [ ! -f /data/sentinel.conf ]; then
+          cp /etc/redis-template/sentinel.conf /data/sentinel.conf
+        fi
+        exec redis-server /data/sentinel.conf --sentinel
+    ports:
+      - "26381:26379"
+    depends_on:
+      redis-master:
+        condition: service_healthy
+      redis-replica-1:
+        condition: service_healthy
+      redis-replica-2:
+        condition: service_healthy
+    volumes:
+      - ./sentinel/sentinel-3.conf:/etc/redis-template/sentinel.conf:ro
+      - redis-sentinel-3-data:/data
+    networks:
+      train-ticket-net:
+        ipv4_address: 172.18.0.25
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - redis-cli -p 26379 sentinel get-master-addr-by-name mymaster | head -n 1 | grep -Eq '^172\.18\.0\.(20|21|22)$'
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+volumes:
+  redis-master-data:
+  redis-replica-1-data:
+  redis-replica-2-data:
+  redis-sentinel-1-data:
+  redis-sentinel-2-data:
+  redis-sentinel-3-data:
+
+networks:
+  train-ticket-net:
+    external: true
+    name: train-ticket-net

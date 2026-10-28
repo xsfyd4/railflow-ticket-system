@@ -7,7 +7,8 @@
 
 它不是一个一次写完的项目，而是**按阶段慢慢加技术**：每个阶段结束都能跑起来、看得见效果，
 再进入下一阶段。核心购票流程已经先用「前端 + 后端 + 数据库」跑通，
-现在补上了 Redis 查票缓存、Redis Lua 分段库存预扣和 RabbitMQ 异步下单。
+现在补上了 Redis 高可用读写分离、UUID 幂等、查票单对象读模型、
+Redis Lua 分段库存预扣、预热与对账，以及 RabbitMQ 异步下单。
 
 ## 这个项目长什么样
 
@@ -49,7 +50,7 @@
 | 前端 | Vue 3 + Vite + Vue Router + Axios + 项目自研响应式样式 |
 | 后端 | Java 17 编译目标 + Spring Boot 4.1.1 + MyBatis XML |
 | 数据库 | MySQL 8.0+（本地验证使用 MySQL 9.7） |
-| 缓存 | Redis 7 + Spring Data Redis/Jedis |
+| 缓存 | Redis 7，1 Master + 2 Replica + 3 Sentinel；Jedis 主写，副本轮询读取 |
 | 消息队列 | RabbitMQ 4 + Spring AMQP |
 | 鉴权 | JWT（前期手写拦截器，不引入 Spring Security 全家桶） |
 | 接口文档 | 待接入 OpenAPI |
@@ -77,6 +78,7 @@
 - [09 · 压测与并发测试报告](docs/09-压测报告.md)
 - [10 · Redis 与 RabbitMQ 异步下单](docs/10-Redis与MQ异步下单.md)
 - [11 · 项目优化想法清单](docs/11-优化想法清单.md)
+- [12 · Redis 高并发架构设计](docs/12-Redis高并发架构设计.md)
 - [分类工作日志](docs/logs/README.md)
 - 建表 SQL：[sql/01-schema.sql](sql/01-schema.sql)
 - 国内演示数据生成器：[scripts/gen_demo_data.py](scripts/gen_demo_data.py)
@@ -145,6 +147,36 @@ npm run dev
 因此本地联调也支持使用 Docker 中的 Linux JDK 启动后端。容器网络
 `train-ticket-net` 已把后端、Redis、RabbitMQ 连接在一起，MySQL 通过
 `host.docker.internal:3306` 连接。
+
+## Redis 高可用
+
+启动或重建开发环境：
+
+```powershell
+docker compose -f infra/redis/docker-compose.yml up -d
+```
+
+该环境包含：
+
+| 节点 | 地址 |
+| --- | --- |
+| Master 服务 | `172.18.0.20:6379`，宿主机 `localhost:6380` |
+| Replica 1 | `172.18.0.21:6379`，宿主机 `localhost:6381` |
+| Replica 2 | `172.18.0.22:6379`，宿主机 `localhost:6382` |
+| Sentinel 1/2/3 | `172.18.0.23`～`172.18.0.25:26379` |
+
+后端容器使用：
+
+```text
+TICKET_REDIS_MODE=sentinel
+TICKET_REDIS_MASTER=mymaster
+TICKET_REDIS_SENTINEL_NODES=redis-sentinel-1:26379,redis-sentinel-2:26379,redis-sentinel-3:26379
+TICKET_REDIS_WARMUP_ENABLED=true
+TICKET_REDIS_RECONCILE_ENABLED=true
+```
+
+详细启动、复制检查、故障演练和配置持久化说明见
+[`infra/redis/README.md`](infra/redis/README.md)。
 
 `01-schema.sql` 已经包含 `pay_log`。`04-pay-log.sql` 只用于已经按旧版
 `01-schema.sql` 建过库、又不想重建数据库的增量迁移，全新安装不需要单独执行。

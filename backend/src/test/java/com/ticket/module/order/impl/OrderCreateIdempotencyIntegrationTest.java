@@ -10,10 +10,12 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -47,6 +49,9 @@ class OrderCreateIdempotencyIntegrationTest {
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
+
+    @Autowired
+    private StringRedisTemplate redis;
 
     @BeforeEach
     void setUp() {
@@ -290,6 +295,11 @@ class OrderCreateIdempotencyIntegrationTest {
                 DELETE FROM ticket_stock
                 WHERE travel_date = ? AND train_id = ?
                 """, TEST_DATE, TRAIN_ID);
+        Set<String> idempotencyKeys =
+                redis.keys("ticket:order:idempotency:*");
+        if (idempotencyKeys != null && !idempotencyKeys.isEmpty()) {
+            redis.delete(idempotencyKeys);
+        }
     }
 
     private record UserPassenger(Long userId, Long passengerId) {

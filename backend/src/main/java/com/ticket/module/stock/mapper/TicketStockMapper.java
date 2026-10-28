@@ -39,6 +39,15 @@ public interface TicketStockMapper {
             @Param("fromSegmentIndex") Integer fromSegmentIndex,
             @Param("toSegmentIndex") Integer toSegmentIndex);
 
+    /**
+     * 按主键游标扫描未来库存，供预热和对账分批处理。
+     */
+    List<TicketStock> findForRedisMaintenance(
+            @Param("startDate") LocalDate startDate,
+            @Param("endDateExclusive") LocalDate endDateExclusive,
+            @Param("lastId") Long lastId,
+            @Param("limit") int limit);
+
     /** 按 id 查一条 */
     StockVO findById(@Param("id") Long id);
 

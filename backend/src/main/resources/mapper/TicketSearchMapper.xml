@@ -129,4 +129,20 @@
         ORDER BY price.seat_type
     </select>
 
+    <select id="findWarmupStationPairs"
+            resultType="com.ticket.module.ticket.dto.TicketSearchDTO">
+        SELECT DISTINCT
+               stop_from.station_id AS from_station_id,
+               stop_to.station_id   AS to_station_id
+        FROM train t
+        INNER JOIN train_stop stop_from
+                ON stop_from.train_id = t.id
+        INNER JOIN train_stop stop_to
+                ON stop_to.train_id = t.id
+               AND stop_from.stop_order &lt; stop_to.stop_order
+        WHERE t.status = 1
+        ORDER BY from_station_id, to_station_id
+        LIMIT #{limit}
+    </select>
+
 </mapper>
