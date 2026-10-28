@@ -4,6 +4,7 @@ import com.ticket.common.result.R;
 import org.springframework.amqp.core.AmqpAdmin;
 import org.springframework.amqp.core.Queue;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -30,6 +31,7 @@ public class InfraCheckController {
     private static final String HEALTH_QUEUE = "ticket.health";
 
     private final StringRedisTemplate redisTemplate;
+    private final StringRedisTemplate cacheRedisTemplate;
     private final RabbitTemplate rabbitTemplate;
     /**
      * 注意这里注入的是接口 AmqpAdmin，不是 RabbitAdmin。
@@ -40,10 +42,15 @@ public class InfraCheckController {
      */
     private final AmqpAdmin amqpAdmin;
 
-    public InfraCheckController(StringRedisTemplate redisTemplate,
+    public InfraCheckController(
+                                @Qualifier("writeRedisTemplate")
+                                StringRedisTemplate redisTemplate,
+                                @Qualifier("cacheRedisTemplate")
+                                StringRedisTemplate cacheRedisTemplate,
                                 RabbitTemplate rabbitTemplate,
                                 AmqpAdmin amqpAdmin) {
         this.redisTemplate = redisTemplate;
+        this.cacheRedisTemplate = cacheRedisTemplate;
         this.rabbitTemplate = rabbitTemplate;
         this.amqpAdmin = amqpAdmin;
     }
@@ -52,18 +59,19 @@ public class InfraCheckController {
     @GetMapping("/infra-check")
     public R<Map<String, Object>> check() {
         Map<String, Object> data = new LinkedHashMap<>();
-        data.put("redis", checkRedis());
+        data.put("stockRedis", checkRedis(redisTemplate, "ticket:health:stock"));
+        data.put("cacheRedis", checkRedis(
+                cacheRedisTemplate, "ticket:health:cache"));
         data.put("rabbitmq", checkRabbit());
         return R.ok(data);
     }
 
     /** 往 Redis 写一个值再读回来，确认读写都通 */
-    private String checkRedis() {
+    private String checkRedis(StringRedisTemplate template, String key) {
         try {
-            String key = "ticket:health";
             String value = "ok-" + System.currentTimeMillis();
-            redisTemplate.opsForValue().set(key, value, Duration.ofSeconds(30));
-            String readBack = redisTemplate.opsForValue().get(key);
+            template.opsForValue().set(key, value, Duration.ofSeconds(30));
+            String readBack = template.opsForValue().get(key);
             return value.equals(readBack) ? "ok" : "读回来的值和写入的不一致";
         } catch (Exception e) {
             return "fail: " + e.getMessage();

@@ -33,3 +33,61 @@ export function dateTime(value) {
 export function newIdempotencyKey() {
   return crypto.randomUUID()
 }
+
+const ORDER_PREFIX = 'ticket:pending:order:'
+const PAY_PREFIX = 'ticket:pending:pay:'
+const KEY_TTL_MS = 24 * 60 * 60 * 1000
+
+function orderFingerprint(payload) {
+  return JSON.stringify({
+    trainId: payload.trainId,
+    travelDate: payload.travelDate,
+    fromStationId: payload.fromStationId,
+    toStationId: payload.toStationId,
+    seatType: payload.seatType,
+    passengerIds: [...payload.passengerIds].sort((a, b) => a - b),
+  })
+}
+
+function persistentKey(storageKey) {
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(storageKey))
+    if (saved?.idempotencyKey && Date.now() - saved.createdAt < KEY_TTL_MS) {
+      return saved.idempotencyKey
+    }
+  } catch {
+    // 损坏的本地数据直接覆盖。
+  }
+  const idempotencyKey = newIdempotencyKey()
+  sessionStorage.setItem(
+    storageKey,
+    JSON.stringify({ idempotencyKey, createdAt: Date.now() }),
+  )
+  return idempotencyKey
+}
+
+export function pendingOrderIdempotencyKey(payload) {
+  return persistentKey(
+    `${ORDER_PREFIX}${userScope()}:${orderFingerprint(payload)}`,
+  )
+}
+
+export function clearPendingOrderIdempotencyKey(payload) {
+  sessionStorage.removeItem(
+    `${ORDER_PREFIX}${userScope()}:${orderFingerprint(payload)}`,
+  )
+}
+
+export function paymentIdempotencyKey(orderNo) {
+  return persistentKey(`${PAY_PREFIX}${userScope()}:${orderNo}`)
+}
+
+export function clearPaymentIdempotencyKey(orderNo) {
+  sessionStorage.removeItem(`${PAY_PREFIX}${userScope()}:${orderNo}`)
+}
+import { auth } from './auth'
+
+
+function userScope() {
+  return auth.user?.id || 'anonymous'
+}

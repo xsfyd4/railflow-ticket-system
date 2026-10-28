@@ -4,10 +4,11 @@ import { useRouter } from 'vue-router'
 import { userApi } from '../api'
 import { toast } from '../ui'
 import {
+  clearPaymentIdempotencyKey,
   dateTime,
   money,
-  newIdempotencyKey,
   orderStatus,
+  paymentIdempotencyKey,
   seatLabel,
 } from '../orderStatus'
 
@@ -58,7 +59,11 @@ function chooseStatus(value) {
 async function pay(order) {
   acting.value = `pay-${order.orderNo}`
   try {
-    await userApi.payOrder(order.orderNo, newIdempotencyKey())
+    await userApi.payOrder(
+      order.orderNo,
+      paymentIdempotencyKey(order.orderNo),
+    )
+    clearPaymentIdempotencyKey(order.orderNo)
     toast('支付成功')
     await load(page.page)
   } catch (e) {

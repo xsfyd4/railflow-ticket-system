@@ -34,6 +34,7 @@ public class ReplicaRedisReader {
     private static final long DISCOVERY_TTL_MILLIS = 30_000L;
 
     private final TicketRedisProperties properties;
+    private final TicketRedisProperties.Group cache;
     private final AtomicInteger nextReplica = new AtomicInteger();
     private final Map<HostAndPort, JedisPooled> pools =
             new ConcurrentHashMap<>();
@@ -42,6 +43,7 @@ public class ReplicaRedisReader {
 
     public ReplicaRedisReader(TicketRedisProperties properties) {
         this.properties = properties;
+        this.cache = properties.getCache();
     }
 
     public String get(String key) {
@@ -95,9 +97,9 @@ public class ReplicaRedisReader {
                 return;
             }
             try {
-                List<HostAndPort> discovered = properties.isSentinelMode()
+                List<HostAndPort> discovered = cache.isSentinelMode()
                         ? discoverFromSentinel()
-                        : parseNodes(properties.getReplicaNodes());
+                        : parseNodes(cache.getReplicaNodes());
                 if (!discovered.isEmpty()) {
                     replicas = List.copyOf(discovered);
                     discoveredAt = now;
@@ -112,14 +114,14 @@ public class ReplicaRedisReader {
 
     private List<HostAndPort> discoverFromSentinel() {
         RuntimeException lastError = null;
-        for (String sentinelAddress : properties.getSentinelNodes()) {
+        for (String sentinelAddress : cache.getSentinelNodes()) {
             HostAndPort sentinelNode = HostAndPort.from(
                     sentinelAddress.trim());
             try (Jedis sentinel = new Jedis(
                     sentinelNode, clientConfig("train-ticket-sentinel-reader"))) {
                 List<HostAndPort> found = new ArrayList<>();
                 for (Map<String, String> replica
-                        : sentinel.sentinelReplicas(properties.getMaster())) {
+                        : sentinel.sentinelReplicas(cache.getMaster())) {
                     String flags = replica.getOrDefault("flags", "");
                     String link = replica.getOrDefault(
                             "master-link-status", "ok");
@@ -183,9 +185,9 @@ public class ReplicaRedisReader {
                         .socketTimeoutMillis((int) properties
                                 .getCommandTimeoutMs())
                         .clientName(clientName);
-        if (properties.getPassword() != null
-                && !properties.getPassword().isBlank()) {
-            builder.password(properties.getPassword());
+        if (cache.getPassword() != null
+                && !cache.getPassword().isBlank()) {
+            builder.password(cache.getPassword());
         }
         return builder.build();
     }

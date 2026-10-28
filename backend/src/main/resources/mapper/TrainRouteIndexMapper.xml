@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.ticket.module.ticket.mapper.TrainRouteIndexMapper">
+
+    <select id="findAllStopsForIndex"
+            resultType="com.ticket.module.ticket.dto.TrainRouteStopRow">
+        SELECT t.id             AS train_id,
+               t.train_no,
+               t.train_type,
+               s.station_id,
+               station.station_name,
+               s.stop_order,
+               s.arrival_time,
+               s.departure_time,
+               s.day_offset,
+               s.mileage
+        FROM train t
+        INNER JOIN train_stop s ON s.train_id = t.id
+        INNER JOIN station ON station.id = s.station_id
+        WHERE t.status = 1
+        ORDER BY t.id, s.stop_order
+    </select>
+
+    <select id="findAllPricesForIndex"
+            resultType="com.ticket.module.train.entity.TrainSegmentPrice">
+        SELECT p.train_id,
+               p.segment_index,
+               p.seat_type,
+               p.price
+        FROM train_segment_price p
+        INNER JOIN train t ON t.id = p.train_id
+        WHERE t.status = 1
+        ORDER BY p.train_id, p.segment_index, p.seat_type
+    </select>
+
+</mapper>

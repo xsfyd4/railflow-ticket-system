@@ -115,7 +115,7 @@ public class TrainServiceImpl implements TrainService {
         }catch(DuplicateKeyException e){
             throw new BizException(ResultCode.TRAIN_NO_EXISTS);
         }
-        cacheInvalidator.invalidateAllAfterCommit();
+        cacheInvalidator.invalidateStaticDataAfterCommit();
         return train.getId();
     }
 
@@ -174,7 +174,7 @@ public class TrainServiceImpl implements TrainService {
         }catch(DuplicateKeyException e){
             throw new BizException(ResultCode.TRAIN_NO_EXISTS);
         }
-        cacheInvalidator.invalidateAllAfterCommit();
+        cacheInvalidator.invalidateStaticDataAfterCommit();
 
     }
 
@@ -189,7 +189,7 @@ public class TrainServiceImpl implements TrainService {
             throw new BizException(ResultCode.TRAIN_IN_USE);
         }
         trainMapper.deleteStocksByTrainId(id);
-        cacheInvalidator.invalidateAllAfterCommit();
+        cacheInvalidator.invalidateStaticDataAfterCommit();
         stockCache.evictTrainAfterCommit(id);
     }
 
@@ -215,6 +215,6 @@ public class TrainServiceImpl implements TrainService {
         trainMapper.deleteSegmentsByTrainId(id);    // 分段
         trainMapper.deleteStopsByTrainId(id);       // 停站
         trainMapper.deleteById(id);                 // 车次本身
-        cacheInvalidator.invalidateAllAfterCommit();
+        cacheInvalidator.invalidateStaticDataAfterCommit();
     }
 }

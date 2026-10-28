@@ -5,6 +5,10 @@ import { userApi } from '../api'
 import { auth } from '../auth'
 import { toast } from '../ui'
 import StationPicker from '../components/StationPicker.vue'
+import {
+  clearPendingOrderIdempotencyKey,
+  pendingOrderIdempotencyKey,
+} from '../orderStatus'
 
 const router = useRouter()
 const seatTypes = [
@@ -136,7 +140,7 @@ function openBooking(ticket, seat) {
   booking.open = true
   booking.selectedIds = []
   booking.error = ''
-  booking.idempotencyKey = crypto.randomUUID()
+  booking.idempotencyKey = ''
   loadPassengers()
 }
 
@@ -155,7 +159,6 @@ function togglePassenger(id) {
   const index = booking.selectedIds.indexOf(id)
   if (index >= 0) booking.selectedIds.splice(index, 1)
   else if (booking.selectedIds.length < 5) booking.selectedIds.push(id)
-  booking.idempotencyKey = crypto.randomUUID()
 }
 
 function closeBooking() {
@@ -170,17 +173,21 @@ async function submitOrder() {
   }
   booking.submitting = true
   try {
+    const orderPayload = {
+      trainId: booking.ticket.trainId,
+      travelDate: travelDate.value,
+      fromStationId: fromStation.value.id,
+      toStationId: toStation.value.id,
+      seatType: booking.seat.seatType,
+      passengerIds: [...booking.selectedIds],
+    }
+    booking.idempotencyKey =
+      pendingOrderIdempotencyKey(orderPayload)
     const data = await userApi.createOrder(
-      {
-        trainId: booking.ticket.trainId,
-        travelDate: travelDate.value,
-        fromStationId: fromStation.value.id,
-        toStationId: toStation.value.id,
-        seatType: booking.seat.seatType,
-        passengerIds: [...booking.selectedIds],
-      },
+      orderPayload,
       booking.idempotencyKey,
     )
+    clearPendingOrderIdempotencyKey(orderPayload)
     booking.open = false
     toast(`订单 ${data.orderNo.slice(-8)} 创建成功`)
     router.push(`/orders/${data.orderNo}`)

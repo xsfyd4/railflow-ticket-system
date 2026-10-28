@@ -43,6 +43,20 @@ Redis Lua 分段库存预扣、预热与对账，以及 RabbitMQ 异步下单。
 
 详细推导见 [docs/02-数据库设计.md](docs/02-数据库设计.md)。
 
+## 查票读模型
+
+后端启动后构建本地“站对 → 车次数组”静态索引：
+
+```text
+cache Redis 查询对象
+→ 未命中：本地车段车次索引
+→ 一次 ticket_stock 批量查询
+→ 组装对象写回 cache Redis
+```
+
+索引重建、损坏或 cache Redis 故障时自动回到原来的 MySQL 三阶段慢查询。
+静态数据变更会先使索引失效和查票版本失效，再后台原子替换新索引。
+
 ## 技术选型
 
 | 层次 | 选型 |
@@ -50,7 +64,7 @@ Redis Lua 分段库存预扣、预热与对账，以及 RabbitMQ 异步下单。
 | 前端 | Vue 3 + Vite + Vue Router + Axios + 项目自研响应式样式 |
 | 后端 | Java 17 编译目标 + Spring Boot 4.1.1 + MyBatis XML |
 | 数据库 | MySQL 8.0+（本地验证使用 MySQL 9.7） |
-| 缓存 | Redis 7，1 Master + 2 Replica + 3 Sentinel；Jedis 主写，副本轮询读取 |
+| 缓存 | 本地车段车次索引 + 两套 Redis 7 高可用组：cache 与 stock 各 1 Master + 2 Replica + 3 Sentinel |
 | 消息队列 | RabbitMQ 4 + Spring AMQP |
 | 鉴权 | JWT（前期手写拦截器，不引入 Spring Security 全家桶） |
 | 接口文档 | 待接入 OpenAPI |
@@ -156,21 +170,35 @@ npm run dev
 docker compose -f infra/redis/docker-compose.yml up -d
 ```
 
-该环境包含：
+该环境包含两套物理隔离的高可用组：
 
-| 节点 | 地址 |
-| --- | --- |
-| Master 服务 | `172.18.0.20:6379`，宿主机 `localhost:6380` |
-| Replica 1 | `172.18.0.21:6379`，宿主机 `localhost:6381` |
-| Replica 2 | `172.18.0.22:6379`，宿主机 `localhost:6382` |
-| Sentinel 1/2/3 | `172.18.0.23`～`172.18.0.25:26379` |
+| 数据组 | 职责 | Master | Replica |
+| --- | --- | --- | --- |
+| `cache` | 查票对象、版本号 | `172.18.0.40` | `172.18.0.41/42` |
+| `stock` | 库存、UUID、对账租约 | `172.18.0.50` | `172.18.0.51/52` |
+
+每组还有三个独立 Sentinel。宿主机端口：
+
+表中是初始角色；发生故障转移后，实际 Master 以 Sentinel 查询结果为准。
+
+```text
+cache 数据：6380、6381、6382
+cache 哨兵：26379、26380、26381
+stock 数据：6390、6391、6392
+stock 哨兵：26389、26390、26391
+```
 
 后端容器使用：
 
 ```text
-TICKET_REDIS_MODE=sentinel
-TICKET_REDIS_MASTER=mymaster
-TICKET_REDIS_SENTINEL_NODES=redis-sentinel-1:26379,redis-sentinel-2:26379,redis-sentinel-3:26379
+TICKET_CACHE_REDIS_MODE=sentinel
+TICKET_CACHE_REDIS_MASTER=cachemaster
+TICKET_CACHE_REDIS_SENTINEL_NODES=cache-sentinel-1:26379,cache-sentinel-2:26379,cache-sentinel-3:26379
+
+TICKET_STOCK_REDIS_MODE=sentinel
+TICKET_STOCK_REDIS_MASTER=stockmaster
+TICKET_STOCK_REDIS_SENTINEL_NODES=stock-sentinel-1:26379,stock-sentinel-2:26379,stock-sentinel-3:26379
+
 TICKET_REDIS_WARMUP_ENABLED=true
 TICKET_REDIS_RECONCILE_ENABLED=true
 ```

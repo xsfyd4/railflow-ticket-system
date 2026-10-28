@@ -23,9 +23,10 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 @SpringBootTest(
         webEnvironment = SpringBootTest.WebEnvironment.NONE,
         properties = {
-                "ticket.redis.port=6390",
+                "ticket.redis.stock.port=6395",
+                "ticket.redis.cache.port=6396",
                 "ticket.redis.command-timeout-ms=200",
-                "ticket.redis.replica-nodes=localhost:6391,localhost:6392",
+                "ticket.redis.cache.replica-nodes=localhost:6397,localhost:6398",
                 "ticket.redis.reconcile.enabled=false",
                 "spring.rabbitmq.listener.simple.auto-startup=false"
         })

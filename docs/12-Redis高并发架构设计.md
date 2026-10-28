@@ -12,33 +12,36 @@
 MySQL 始终是订单、库存和支付的事实来源。Redis 故障、主从切换或数据丢失时，
 查票和同步下单必须仍能走 MySQL 同步路径完成业务。
 
-本阶段部署一组高可用 Redis：
+本阶段部署两套物理隔离的高可用 Redis：
 
-- 1 个 Master 数据节点；
-- 2 个 Replica 数据节点；
-- 3 个 Sentinel 进程；
-- Sentinel quorum = 2，故障转移 majority = 2。
+- `redis-cache`：1 Master + 2 Replica + 3 Sentinel；
+- `redis-stock`：1 Master + 2 Replica + 3 Sentinel；
+- 每套 Sentinel quorum = 2，故障转移 majority = 2。
 
-开发环境的六个节点使用固定地址 `172.18.0.20`～`172.18.0.25`。
+开发环境的 cache 节点使用 `172.18.0.40`～`172.18.0.45`，
+stock 节点使用 `172.18.0.50`～`172.18.0.55`。
 Master 停止后 Docker DNS 会同步移除容器名，因此 Sentinel 必须监控固定 IP，
 否则会进入 `tilt` 而无法确认故障。Sentinel 配置写入各自的命名数据卷，
 确保选举结果可持久化。
 
-当前先保证一个数据组的主从与自动切换。全国规模继续增长后，再按业务物理拆成
-`redis-cache` 和 `redis-stock` 两个 Redis Cluster；只拆逻辑库不能隔离 CPU、内存、
-网络和故障域。
+两套数据组拥有独立进程、数据卷、连接池和故障域。停止 cache 组只影响查票缓存，
+不会影响动态库存和 UUID；停止 stock 组也不会清空查票对象。
 
 ## 二、读写路由
 
 ### 写连接
 
-主写连接使用 Jedis Sentinel Pool，只连接 Sentinel 报告的当前 Master：
+两套主写连接都使用独立 Jedis Sentinel Pool：
 
+cache 组：
+- `ticket:search:v*`；
+- `ticket:search:version:*`。
+
+stock 组：
 - `ticket:stock:*` 分段库存；
 - `ticket:order:idempotency:*` 下单 UUID 状态；
 - `ticket:pay:idempotency:*` 支付 UUID 状态；
-- `ticket:search:version:*` 查票版本号；
-- 查票快照的写入和故障修复。
+- 对账租约。
 
 库存和幂等准入必须写 Master，不能由 Replica 承担。
 
@@ -80,6 +83,43 @@ Master 停止后 Docker DNS 会同步移除容器名，因此 Sentinel 必须监
 
 这样一次网络请求即可拿到整页结果。后端读取后按小标重组
 `PageResult<TicketVO>`，前端接口格式保持不变。
+
+## 三-A、车段车次静态索引
+
+`TrainRouteIndex` 从启用车次的停站、分段和票价构建本地静态索引：
+
+```text
+fromStationId + toStationId
+→ RouteBucket 单对象平行数组
+```
+
+数组保存 trainId、车次号、车型、起终站、起止段号、发到时刻、
+运行时长、里程和分席别票价。当前数据构建结果为：
+
+```text
+296 个有向站对
+840 条站对车次关系
+构建耗时约 390ms
+```
+
+索引状态：
+
+```text
+NEW → REBUILDING → READY
+                 ↘ UNAVAILABLE
+```
+
+重要规则：
+
+- 静态数据变化时先标记 `REBUILDING`；
+- 再递增 cache Redis 全局版本；
+- 然后后台构建新索引；
+- 构建完成后用 `AtomicReference` 原子替换；
+- 构建失败时保持 `UNAVAILABLE` 并定时重试；
+- 索引未就绪期间不读取 Redis 查票对象，直接走 MySQL 慢查询。
+
+缓存未命中且索引 READY 时，只执行一次 `ticket_stock` 批量查询，
+不再执行原来的 `countTrains + findTrainIds + findSeatRows` 三条联表查询。
 
 ## 四、UUID 幂等状态
 
@@ -155,12 +195,21 @@ ticket:pay:idempotency:{requestId}
 同步下单的完整 MySQL 事务路径始终保留。Redis 只做快速幂等闸门，不代替
 `ticket_order.request_id` 唯一索引，也不代替库存条件 UPDATE。
 
+cache Redis 使用连续失败熔断。默认失败 3 次后暂停访问 15 秒，
+期间直接使用 MySQL，避免每个请求等待 Redis 连接超时；冷却结束后自动探测恢复。
+
 ## 八、验证清单
 
-- [x] 三个数据节点和三个 Sentinel 正常启动。
+- [x] cache/stock 两套物理 Redis 各 1 Master + 2 Replica + 3 Sentinel 正常启动。
 - [x] Replica 可读，库存与 UUID 写入 Master。
 - [x] 主节点故障后 Sentinel 选出新 Master，新拓扑已持久化。
 - [x] 原 Master 恢复后自动以 Replica 身份重新加入。
+- [x] cache 与 stock 的 Key 不再混写，故障域独立。
+- [x] 车段车次索引可构建、失效、重建和原子替换。
+- [x] 索引未就绪时绕过 Redis 对象，直接使用 MySQL 慢查询。
+- [x] 缓存未命中时索引快路径只执行一次库存 SQL。
+- [x] cache Redis 连续故障后熔断，冷却后自动恢复。
+- [x] 前端下单和支付幂等键持久化到 `sessionStorage`。
 - [x] UUID `SET NX` 并发只有一个 owner。
 - [x] `PROCESSING` 阻止重复建单，`SUCCESS` 返回同一结果。
 - [x] 请求摘要变化时返回幂等冲突。
@@ -173,10 +222,12 @@ ticket:pay:idempotency:{requestId}
 
 ## 九、验证结果
 
-- 后端测试：57 个，53 通过，4 个手动性能基准跳过，0 失败。
+- 后端测试：63 个，59 通过，4 个手动性能基准跳过，0 失败。
 - 实测首次启动预热：补建 5000 个库存 Key，预热 40 条线路共 240 个查票对象。
 - 实测对账：扫描 2844 行，修复 702 个差异，活跃预扣跳过为 0。
 - 真实 HTTP 登录、查票成功，返回 G1001 和正确区间余票。
 - 停止 Master 后，三个 Sentinel 一致选出新 Master；后端自动恢复 Redis 写路径。
 - 停止一个 Replica 后，HTTP 查票仍成功。
 - 用户端和管理端生产构建均成功。
+- 停止整个 cache 组后查票仍成功，熔断后延迟从秒级降到约 9ms，stock Redis 保持 `ok`。
+- 停止 stock Master 后 Sentinel 自动切换，cache Redis 全程保持 `ok`。

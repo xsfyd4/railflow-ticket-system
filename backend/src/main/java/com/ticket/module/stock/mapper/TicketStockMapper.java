@@ -48,6 +48,13 @@ public interface TicketStockMapper {
             @Param("lastId") Long lastId,
             @Param("limit") int limit);
 
+    /**
+     * 车段车次索引命中后，只按车次批量读取某天的库存。
+     */
+    List<TicketStock> findForSearch(
+            @Param("travelDate") LocalDate travelDate,
+            @Param("trainIds") List<Long> trainIds);
+
     /** 按 id 查一条 */
     StockVO findById(@Param("id") Long id);
 

@@ -128,7 +128,7 @@ public class StationServiceImpl implements StationService {
         // status 没传时保持原值，避免把停用的车站悄悄启用
         station.setStatus(dto.getStatus() == null ? station.getStatus() : dto.getStatus());
         stationMapper.update(station);
-        cacheInvalidator.invalidateAllAfterCommit();
+        cacheInvalidator.invalidateStaticDataAfterCommit();
 
     }
 
@@ -148,7 +148,7 @@ public class StationServiceImpl implements StationService {
 
         // 3. 没人用，真删
         stationMapper.deleteById(id);
-        cacheInvalidator.invalidateAllAfterCommit();
+        cacheInvalidator.invalidateStaticDataAfterCommit();
     }
 
     @Override

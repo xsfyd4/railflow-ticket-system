@@ -4,10 +4,11 @@ import { useRoute, useRouter } from 'vue-router'
 import { userApi } from '../api'
 import { toast } from '../ui'
 import {
+  clearPaymentIdempotencyKey,
   dateTime,
   money,
-  newIdempotencyKey,
   orderStatus,
+  paymentIdempotencyKey,
   seatLabel,
 } from '../orderStatus'
 
@@ -46,7 +47,11 @@ function toggleRefund(id) {
 async function pay() {
   acting.value = true
   try {
-    await userApi.payOrder(order.value.orderNo, newIdempotencyKey())
+    await userApi.payOrder(
+      order.value.orderNo,
+      paymentIdempotencyKey(order.value.orderNo),
+    )
+    clearPaymentIdempotencyKey(order.value.orderNo)
     toast('支付成功')
     await load()
   } catch (e) {

@@ -119,7 +119,7 @@ public class TrainStopServiceImpl implements TrainStopService {
         TrainStopItemDTO last = stops.get(stops.size() - 1);
         BigDecimal totalMileage = last.getMileage() == null ? BigDecimal.ZERO : last.getMileage();
         trainMapper.updateStations(trainId, first.getStationId(), last.getStationId(), totalMileage);
-        cacheInvalidator.invalidateAllAfterCommit();
+        cacheInvalidator.invalidateStaticDataAfterCommit();
     }
 
     @Override
@@ -174,7 +174,7 @@ public class TrainStopServiceImpl implements TrainStopService {
             prices.add(p);
         }
         priceMapper.batchInsert(prices);
-        cacheInvalidator.invalidateAllAfterCommit();
+        cacheInvalidator.invalidateStaticDataAfterCommit();
     }
 
     // ==================== 私有工具方法 ====================

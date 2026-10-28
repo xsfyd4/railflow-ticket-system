@@ -61,18 +61,31 @@ logging:
 #  JWT 配置（阶段 2 新增）
 # ------------------------------------------------------------
 ticket:
+  route-index:
+    retry-delay-ms: 30000
   redis:
-    # 本机自动化测试使用 standalone；Docker 环境通过环境变量切到 sentinel。
-    mode: ${TICKET_REDIS_MODE:standalone}
-    host: ${TICKET_REDIS_HOST:localhost}
-    port: ${TICKET_REDIS_PORT:6380}
-    master: ${TICKET_REDIS_MASTER:mymaster}
-    sentinel-nodes: ${TICKET_REDIS_SENTINEL_NODES:localhost:26379}
-    # standalone 测试使用两个副本端口；sentinel 模式通过 Sentinel 自动发现。
-    replica-nodes:
-      - localhost:6381
-      - localhost:6382
-    password: ${TICKET_REDIS_PASSWORD:}
+    # 查票对象和版本号使用独立的 cache 数据组。
+    cache:
+      mode: ${TICKET_CACHE_REDIS_MODE:standalone}
+      host: ${TICKET_CACHE_REDIS_HOST:localhost}
+      port: ${TICKET_CACHE_REDIS_PORT:6380}
+      master: ${TICKET_CACHE_REDIS_MASTER:cachemaster}
+      sentinel-nodes: ${TICKET_CACHE_REDIS_SENTINEL_NODES:localhost:26379}
+      replica-nodes:
+        - localhost:6381
+        - localhost:6382
+      password: ${TICKET_CACHE_REDIS_PASSWORD:}
+    # 动态库存、UUID 幂等状态和对账使用独立的 stock 数据组。
+    stock:
+      mode: ${TICKET_STOCK_REDIS_MODE:standalone}
+      host: ${TICKET_STOCK_REDIS_HOST:localhost}
+      port: ${TICKET_STOCK_REDIS_PORT:6390}
+      master: ${TICKET_STOCK_REDIS_MASTER:stockmaster}
+      sentinel-nodes: ${TICKET_STOCK_REDIS_SENTINEL_NODES:localhost:26389}
+      replica-nodes:
+        - localhost:6391
+        - localhost:6392
+      password: ${TICKET_STOCK_REDIS_PASSWORD:}
     command-timeout-ms: 3000
     idempotency-processing-ttl-seconds: 600
     idempotency-success-ttl-seconds: 604800
@@ -95,6 +108,9 @@ ticket:
       initial-delay-ms: 60000
       interval-ms: 300000
       days: 3
+    circuit-breaker:
+      failure-threshold: 3
+      open-seconds: 15
   cache:
     enabled: true
     # 查票结果缓存时间。库存变化会通过版本号立即失效。

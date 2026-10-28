@@ -14,7 +14,7 @@ class ReplicaRedisReaderIntegrationTest {
     private static final String KEY = "ticket:test:replica-reader";
 
     @Autowired
-    @Qualifier("writeRedisTemplate")
+    @Qualifier("cacheRedisTemplate")
     private StringRedisTemplate writeRedis;
 
     @Autowired

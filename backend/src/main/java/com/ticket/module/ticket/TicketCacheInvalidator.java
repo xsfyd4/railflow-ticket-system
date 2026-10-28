@@ -16,9 +16,12 @@ import java.time.LocalDate;
 public class TicketCacheInvalidator {
 
     private final TicketSearchCache cache;
+    private final TrainRouteIndex routeIndex;
 
-    public TicketCacheInvalidator(TicketSearchCache cache) {
+    public TicketCacheInvalidator(TicketSearchCache cache,
+                                  TrainRouteIndex routeIndex) {
         this.cache = cache;
+        this.routeIndex = routeIndex;
     }
 
     public void invalidateDateAfterCommit(LocalDate travelDate) {
@@ -27,6 +30,18 @@ public class TicketCacheInvalidator {
 
     public void invalidateAllAfterCommit() {
         runAfterCommit(cache::invalidateAll);
+    }
+
+    /**
+     * 车次、停站、分段、票价或站名变化后使用。
+     * 先让索引进入 REBUILDING，再使 Redis 结果对象版本失效。
+     */
+    public void invalidateStaticDataAfterCommit() {
+        runAfterCommit(() -> {
+            routeIndex.beginRebuild("admin-static-data-change");
+            cache.invalidateAll();
+            routeIndex.startRebuild();
+        });
     }
 
     private void runAfterCommit(Runnable action) {

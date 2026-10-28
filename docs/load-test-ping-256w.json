@@ -1,0 +1,23 @@
+{
+  "timestamp": "2026-10-28T13:02:25+0800",
+  "target": "http://localhost:8080/api/public/ping",
+  "scenario": "ping",
+  "processes": 16,
+  "workersPerProcess": 16,
+  "totalConcurrency": 256,
+  "configuredDurationSeconds": 10.0,
+  "actualDurationSeconds": 10.044,
+  "totalRequests": 197950,
+  "successfulRequests": 197950,
+  "failedRequests": 0,
+  "errorCount": 0,
+  "qps": 19708.61,
+  "latencyMs": {
+    "avg": 4.73,
+    "p50": 2.96,
+    "p95": 11.54,
+    "p99": 14.26,
+    "max": 115.91
+  },
+  "sampleErrors": []
+}

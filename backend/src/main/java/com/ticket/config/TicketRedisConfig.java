@@ -1,5 +1,6 @@
 package com.ticket.config;
 
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -17,10 +18,10 @@ import java.util.LinkedHashSet;
 import java.util.Set;
 
 /**
- * Redis 主写连接。
+ * 两套物理 Redis 连接。
  *
- * <p>所有库存、版本、UUID 和缓存写入都通过这个模板。
- * 查票副本读取由 {@link ReplicaRedisReader} 单独轮询两个副本完成。
+ * <p>默认主模板连接 stock Master，以兼容已有库存和 UUID 代码；
+ * 查票缓存必须显式使用 cache 模板，读写分别落在 cache 主从组。
  */
 @Configuration
 @EnableConfigurationProperties(TicketRedisProperties.class)
@@ -28,9 +29,43 @@ public class TicketRedisConfig {
 
     @Bean
     @Primary
-    public JedisConnectionFactory redisConnectionFactory(
+    public JedisConnectionFactory stockRedisConnectionFactory(
             TicketRedisProperties properties) {
-        RedisConfiguration configuration = redisConfiguration(properties);
+        return connectionFactory(
+                properties.getStock(),
+                properties.getCommandTimeoutMs(),
+                "train-ticket-stock-writer");
+    }
+
+    @Bean
+    public JedisConnectionFactory cacheRedisConnectionFactory(
+            TicketRedisProperties properties) {
+        return connectionFactory(
+                properties.getCache(),
+                properties.getCommandTimeoutMs(),
+                "train-ticket-cache-writer");
+    }
+
+    @Bean
+    @Primary
+    public StringRedisTemplate writeRedisTemplate(
+            @Qualifier("stockRedisConnectionFactory")
+            JedisConnectionFactory factory) {
+        return new StringRedisTemplate(factory);
+    }
+
+    @Bean
+    public StringRedisTemplate cacheRedisTemplate(
+            @Qualifier("cacheRedisConnectionFactory")
+            JedisConnectionFactory factory) {
+        return new StringRedisTemplate(factory);
+    }
+
+    private JedisConnectionFactory connectionFactory(
+            TicketRedisProperties.Group group,
+            long commandTimeoutMs,
+            String clientName) {
+        RedisConfiguration configuration = redisConfiguration(group);
         JedisPoolConfig poolConfig = new JedisPoolConfig();
         poolConfig.setMaxTotal(64);
         poolConfig.setMaxIdle(16);
@@ -39,50 +74,41 @@ public class TicketRedisConfig {
 
         JedisConnectionFactory factory;
         if (configuration instanceof RedisSentinelConfiguration sentinel) {
-            factory = new JedisConnectionFactory(
-                    sentinel, poolConfig);
+            factory = new JedisConnectionFactory(sentinel, poolConfig);
         } else {
             factory = new JedisConnectionFactory(
                     (RedisStandaloneConfiguration) configuration);
             factory.setPoolConfig(poolConfig);
         }
-        factory.setClientName("train-ticket-redis-writer");
+        factory.setClientName(clientName);
         factory.setUsePool(true);
-        factory.setTimeout((int) Math.max(
-                200, properties.getCommandTimeoutMs()));
+        factory.setTimeout((int) Math.max(200, commandTimeoutMs));
         return factory;
     }
 
-    @Bean
-    @Primary
-    public StringRedisTemplate writeRedisTemplate(
-            JedisConnectionFactory factory) {
-        return new StringRedisTemplate(factory);
-    }
-
     private RedisConfiguration redisConfiguration(
-            TicketRedisProperties properties) {
-        if (!properties.isSentinelMode()) {
+            TicketRedisProperties.Group group) {
+        if (!group.isSentinelMode()) {
             RedisStandaloneConfiguration standalone =
                     new RedisStandaloneConfiguration(
-                            properties.getHost(), properties.getPort());
-            applyPassword(standalone, properties.getPassword());
+                            group.getHost(), group.getPort());
+            applyPassword(standalone, group.getPassword());
             return standalone;
         }
 
-        if (properties.getSentinelNodes().isEmpty()) {
+        if (group.getSentinelNodes().isEmpty()) {
             throw new IllegalArgumentException(
-                    "Sentinel 模式必须配置 ticket.redis.sentinel-nodes");
+                    "Sentinel 模式必须配置 Sentinel 节点");
         }
         RedisSentinelConfiguration sentinel =
                 new RedisSentinelConfiguration();
-        sentinel.master(properties.getMaster());
+        sentinel.master(group.getMaster());
         Set<RedisNode> nodes = new LinkedHashSet<>();
-        for (String address : properties.getSentinelNodes()) {
+        for (String address : group.getSentinelNodes()) {
             nodes.add(RedisNode.fromString(address.trim()));
         }
         sentinel.setSentinels(nodes);
-        applyPassword(sentinel, properties.getPassword());
+        applyPassword(sentinel, group.getPassword());
         return sentinel;
     }
 
