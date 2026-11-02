@@ -7,6 +7,7 @@ import com.ticket.module.order.dto.CreateOrderDTO;
 import com.ticket.module.order.entity.OrderRequest;
 import com.ticket.module.order.mapper.OrderRequestMapper;
 import com.ticket.module.order.vo.CreateOrderVO;
+import com.ticket.module.stock.TicketStockCache;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -27,17 +28,24 @@ public class OrderRequestTxService {
 
     private static final int STATUS_SUCCESS = 3;
     private static final int STATUS_FAILED = 4;
+    private static final int STATUS_FAILING = 5;
 
     private final OrderRequestMapper requestMapper;
     private final OrderService orderService;
     private final ObjectMapper objectMapper;
+    private final OrderRequestFlowService flowService;
+    private final TicketStockCache stockCache;
 
     public OrderRequestTxService(OrderRequestMapper requestMapper,
                                  OrderService orderService,
-                                 ObjectMapper objectMapper) {
+                                 ObjectMapper objectMapper,
+                                 OrderRequestFlowService flowService,
+                                 TicketStockCache stockCache) {
         this.requestMapper = requestMapper;
         this.orderService = orderService;
         this.objectMapper = objectMapper;
+        this.flowService = flowService;
+        this.stockCache = stockCache;
     }
 
     /**
@@ -53,7 +61,8 @@ public class OrderRequestTxService {
             throw new BizException(ResultCode.ASYNC_REQUEST_NOT_FOUND);
         }
         if (request.getStatus() == STATUS_SUCCESS
-                || request.getStatus() == STATUS_FAILED) {
+                || request.getStatus() == STATUS_FAILED
+                || request.getStatus() == STATUS_FAILING) {
             log.info("异步下单消息重复到达，当前已终态，requestId={}，status={}",
                     requestId, request.getStatus());
             return;
@@ -63,7 +72,9 @@ public class OrderRequestTxService {
                     "异步下单请求状态不允许消费：" + request.getStatus());
         }
 
-        requestMapper.markProcessing(requestId);
+        if (!flowService.markProcessing(requestId, request.getFlowState())) {
+            throw new BizException(ResultCode.ORDER_STATUS_ERROR);
+        }
 
         CreateOrderDTO dto;
         try {
@@ -75,15 +86,16 @@ public class OrderRequestTxService {
 
         CreateOrderVO order =
                 orderService.createForUser(request.getUserId(), dto);
-        int affected = requestMapper.markSuccess(
-                requestId, order.getOrderId(), order.getOrderNo());
-        if (affected != 1) {
+        if (!flowService.markSuccess(
+                requestId, order.getOrderId(), order.getOrderNo())) {
             /*
              * 抛出后同一事务会撤销库存和订单，由消费者补偿 Redis。
              * 正常不会发生，保留是为了防止状态表被人工改坏。
              */
             throw new BizException(ResultCode.ORDER_STATUS_ERROR);
         }
+        stockCache.completeReservationAfterCommit(
+                requestId, request.getTravelDate(), request.getTrainId());
         log.info("异步订单消费成功，requestId={}，orderNo={}",
                 requestId, order.getOrderNo());
     }

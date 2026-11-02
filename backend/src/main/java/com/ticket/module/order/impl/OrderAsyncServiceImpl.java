@@ -3,6 +3,7 @@ package com.ticket.module.order.impl;
 import com.ticket.common.exception.BizException;
 import com.ticket.common.result.ResultCode;
 import com.ticket.module.order.IdempotencyHash;
+import com.ticket.module.order.OrderFlowState;
 import com.ticket.module.order.RedisIdempotencyStore;
 import com.ticket.module.order.dto.CreateOrderDTO;
 import com.ticket.module.order.entity.OrderRequest;
@@ -17,11 +18,13 @@ import com.ticket.module.train.vo.TrainPriceVO;
 import com.ticket.security.LoginUser;
 import com.ticket.security.LoginUserContext;
 import org.springframework.dao.DuplicateKeyException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import tools.jackson.databind.ObjectMapper;
 
+import java.time.Duration;
 import java.time.LocalDate;
-import java.time.LocalDateTime;
 import java.util.HashSet;
 import java.util.List;
 
@@ -34,6 +37,8 @@ import java.util.List;
 @Service
 public class OrderAsyncServiceImpl {
 
+    private static final Logger log =
+            LoggerFactory.getLogger(OrderAsyncServiceImpl.class);
     private static final int STATUS_SUBMITTED = 0;
     private static final int STATUS_QUEUED = 1;
 
@@ -45,6 +50,7 @@ public class OrderAsyncServiceImpl {
     private final OrderRequestFailureService failureService;
     private final ObjectMapper objectMapper;
     private final RedisIdempotencyStore idempotencyStore;
+    private final OrderRequestFlowService flowService;
 
     public OrderAsyncServiceImpl(
             OrderRequestMapper requestMapper,
@@ -54,7 +60,8 @@ public class OrderAsyncServiceImpl {
             AsyncOrderPublisher publisher,
             OrderRequestFailureService failureService,
             ObjectMapper objectMapper,
-            RedisIdempotencyStore idempotencyStore) {
+            RedisIdempotencyStore idempotencyStore,
+            OrderRequestFlowService flowService) {
         this.requestMapper = requestMapper;
         this.orderMapper = orderMapper;
         this.passengerMapper = passengerMapper;
@@ -63,6 +70,7 @@ public class OrderAsyncServiceImpl {
         this.failureService = failureService;
         this.objectMapper = objectMapper;
         this.idempotencyStore = idempotencyStore;
+        this.flowService = flowService;
     }
 
     public AsyncOrderVO submit(String idempotencyKey, CreateOrderDTO dto) {
@@ -107,7 +115,7 @@ public class OrderAsyncServiceImpl {
 
         OrderRequest request = buildRequest(requestId, userId, dto, plan);
         try {
-            requestMapper.insert(request);
+            flowService.create(request);
         } catch (DuplicateKeyException duplicate) {
             // 两个相同幂等键并发提交时，只有一个能 INSERT 成功。
             OrderRequest winner = requestMapper.findByRequestId(requestId);
@@ -122,8 +130,10 @@ public class OrderAsyncServiceImpl {
             return replayExisting(winner, userId, dto);
         }
 
+        String ownerToken = flowService.markReserving(requestId);
         TicketStockCache.ReserveResult reserveResult =
                 stockCache.tryReserve(
+                        requestId,
                         dto.getTravelDate(),
                         dto.getTrainId(),
                         dto.getSeatType(),
@@ -148,8 +158,8 @@ public class OrderAsyncServiceImpl {
             throw new BizException(ResultCode.TICKET_NOT_ENOUGH);
         }
 
-        int queued = requestMapper.markQueued(requestId);
-        if (queued != 1) {
+        if (!flowService.markReserved(
+                requestId, ownerToken, Duration.ofSeconds(30))) {
             idempotencyStore.markFailed(
                     "ORDER", requestId, gate.ownerToken(),
                     "异步请求状态已经变化");
@@ -157,12 +167,36 @@ public class OrderAsyncServiceImpl {
         }
 
         try {
+            if (!flowService.markPublishing(
+                    requestId, Duration.ofSeconds(10))) {
+                throw new BizException(ResultCode.ASYNC_REQUEST_CONFLICT);
+            }
             publisher.publish(requestId);
-            requestMapper.markPublished(requestId, LocalDateTime.now());
+            if (!flowService.markPublished(requestId)) {
+                log.warn("MQ 已确认，但流程状态未能标记为 PUBLISHED，requestId={}",
+                        requestId);
+            }
             idempotencyStore.markSuccess(
                     "ORDER", requestId, gate.ownerToken(), requestId);
         } catch (RuntimeException e) {
-            failureService.fail(requestId, e.getMessage());
+            boolean markedFailed = failureService.fail(
+                    requestId, e.getMessage());
+            OrderRequest latest =
+                    requestMapper.findByRequestId(requestId);
+            if (latest != null && latest.getStatus() != null
+                    && latest.getStatus() == 3) {
+                /*
+                 * Publisher Confirm 超时并不代表消息一定没到 Broker。
+                 * 消费者可能已经成功，此时把本次提交按幂等成功返回。
+                 */
+                idempotencyStore.markSuccess(
+                        "ORDER", requestId, gate.ownerToken(), requestId);
+                return toVO(latest);
+            }
+            if (!markedFailed) {
+                log.warn("MQ 发布结果不确定，请求已交由恢复任务处理，requestId={}",
+                        requestId);
+            }
             idempotencyStore.markFailed(
                     "ORDER", requestId, gate.ownerToken(),
                     e.getMessage());
@@ -294,6 +328,8 @@ public class OrderAsyncServiceImpl {
         request.setPassengerCount(plan.passengerCount());
         request.setStatus(STATUS_SUBMITTED);
         request.setStockReserved(0);
+        request.setStockReleased(0);
+        request.setFlowState(OrderFlowState.CREATED.name());
         return request;
     }
 
@@ -302,6 +338,8 @@ public class OrderAsyncServiceImpl {
         vo.setRequestId(request.getRequestId());
         vo.setStatus(request.getStatus());
         vo.setStatusText(statusText(request.getStatus()));
+        vo.setFlowState(request.getFlowState());
+        vo.setStockReserved(request.getStockReserved());
         vo.setOrderId(request.getOrderId());
         vo.setOrderNo(request.getOrderNo());
         vo.setFailReason(request.getFailReason());
@@ -317,6 +355,7 @@ public class OrderAsyncServiceImpl {
             case 2 -> "处理中";
             case 3 -> "下单成功";
             case 4 -> "下单失败";
+            case 5 -> "失败补偿中";
             default -> "未知状态";
         };
     }

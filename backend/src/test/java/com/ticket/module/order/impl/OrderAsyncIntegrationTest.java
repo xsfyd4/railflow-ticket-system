@@ -9,6 +9,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -16,6 +17,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -44,6 +47,7 @@ class OrderAsyncIntegrationTest {
     private TicketStockCache stockCache;
 
     @Autowired
+    @Qualifier("writeRedisTemplate")
     private StringRedisTemplate redis;
 
     @Autowired
@@ -127,6 +131,23 @@ class OrderAsyncIntegrationTest {
                 SELECT COUNT(*) FROM ticket_order
                 WHERE user_id = ?
                 """, userId));
+
+        Map<String, Object> flow = jdbcTemplate.queryForMap("""
+                SELECT flow_state, stock_reserved, stock_released
+                FROM order_request
+                WHERE request_id = ?
+                """, requestId);
+        assertEquals("SUCCEEDED", flow.get("flow_state"));
+        assertEquals(1, ((Number) flow.get("stock_reserved")).intValue());
+        assertEquals(0, ((Number) flow.get("stock_released")).intValue());
+        assertTrue(count("""
+                SELECT COUNT(*) FROM order_flow_event
+                WHERE request_id = ?
+                """, requestId) >= 6);
+        assertEquals("SOLD", redis.opsForHash().get(
+                stockCache.reservationKey(
+                        TEST_DATE, TRAIN_ID, requestId),
+                "state"));
     }
 
     private AsyncOrderVO waitForSuccess(String requestId)
@@ -178,6 +199,15 @@ class OrderAsyncIntegrationTest {
 
     private void cleanup() {
         jdbcTemplate.update("""
+                DELETE FROM order_flow_event
+                WHERE request_id IN (
+                    SELECT request_id FROM order_request
+                    WHERE user_id IN (
+                        SELECT id FROM sys_user WHERE username = ?
+                    )
+                )
+                """, USERNAME);
+        jdbcTemplate.update("""
                 DELETE FROM ticket_order_item
                 WHERE order_id IN (
                     SELECT id FROM ticket_order WHERE user_id IN (
@@ -216,5 +246,10 @@ class OrderAsyncIntegrationTest {
                     TEST_DATE, TRAIN_ID, SEAT_TYPE, segment));
         }
         redis.delete(keys);
+        Set<String> reservationKeys = redis.keys(
+                "ticket:reservation:*2099-07-01:1*");
+        if (reservationKeys != null && !reservationKeys.isEmpty()) {
+            redis.delete(reservationKeys);
+        }
     }
 }

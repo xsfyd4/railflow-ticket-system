@@ -222,11 +222,12 @@ TICKET_REDIS_RECONCILE_ENABLED=true
 
 `pay_log` 是运行时交易流水，不做演示初始化。只有用户发起真实或模拟支付后才会产生记录。
 
-已经用旧版脚本建过库时，按顺序执行两个增量迁移：
+已经用旧版脚本建过库时，按顺序执行三个增量迁移：
 
 ```bash
 mysql -u root -p train_ticket < sql/05-order-request.sql
 mysql -u root -p train_ticket < sql/06-order-request-reservation.sql
+mysql -u root -p train_ticket < sql/08-order-flow-reliability.sql
 ```
 
 异步下单接口：
@@ -246,6 +247,10 @@ Authorization: Bearer <token>
 ```
 
 原有同步接口 `POST /api/user/orders` 继续保留，便于对照学习。
+
+异步链路会持久化 `CREATED → RESERVING → RESERVED → PUBLISHING → PUBLISHED → PROCESSING → SUCCEEDED`
+流程状态，并使用 RabbitMQ Publisher Confirm 确认消息已落 Broker。恢复任务同时使用
+`order_flow_event` 增量游标和 `order_request` 全量审计游标。
 
 ## 综合压测
 

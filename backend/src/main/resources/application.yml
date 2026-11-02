@@ -37,6 +37,10 @@ spring:
     port: ${SPRING_RABBITMQ_PORT:5672}
     username: ${SPRING_RABBITMQ_USERNAME:guest}
     password: ${SPRING_RABBITMQ_PASSWORD:guest}
+    publisher-confirm-type: correlated
+    publisher-returns: true
+    template:
+      mandatory: true
     listener:
       simple:
         # 每个消费者实例先开 2 个线程，忙时最多 8 个。
@@ -144,13 +148,17 @@ ticket:
       # 消费者遇到数据库短暂异常时的总尝试次数。
       max-attempts: 3
       retry-backoff-ms: 100
-      # 状态 1 但还没投递成功的请求，由补偿任务重新投递。
-      republish-delay-seconds: 30
-      # 状态 0/2 卡死超过该时间就终止并释放预扣。
+      # 活跃流程超过该时间仍未推进时进入恢复。
       stale-minutes: 10
-      recovery-scan-ms: 30000
-      recovery-initial-delay-ms: 30000
+      # 短周期只扫描 order_flow_event 新增流水。
+      recovery-scan-ms: 5000
+      recovery-initial-delay-ms: 10000
       recovery-batch-size: 100
+      event-delay-seconds: 10
+      full-scan-ms: 600000
+      full-scan-initial-delay-ms: 120000
+      full-batches-per-run: 20
+      publish-confirm-timeout-ms: 3000
   jwt:
     # 签名密钥。HS256 算法要求至少 32 字节（256 位），太短 jjwt 启动就报错。
     # ★ 真实项目里这个值必须放进环境变量，绝不能提交到 Git——

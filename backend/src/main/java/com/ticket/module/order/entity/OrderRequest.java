@@ -23,6 +23,13 @@ public class OrderRequest {
     private Integer passengerCount;
     private Integer status;
     private Integer stockReserved;
+    private Integer stockReleased;
+    private String flowState;
+    private String ownerToken;
+    private LocalDateTime leaseUntil;
+    private LocalDateTime nextRetryAt;
+    private String lastError;
+    private Integer version;
     private LocalDateTime publishedAt;
     private Long orderId;
     private String orderNo;
@@ -124,6 +131,62 @@ public class OrderRequest {
 
     public void setStockReserved(Integer stockReserved) {
         this.stockReserved = stockReserved;
+    }
+
+    public Integer getStockReleased() {
+        return stockReleased;
+    }
+
+    public void setStockReleased(Integer stockReleased) {
+        this.stockReleased = stockReleased;
+    }
+
+    public String getFlowState() {
+        return flowState;
+    }
+
+    public void setFlowState(String flowState) {
+        this.flowState = flowState;
+    }
+
+    public String getOwnerToken() {
+        return ownerToken;
+    }
+
+    public void setOwnerToken(String ownerToken) {
+        this.ownerToken = ownerToken;
+    }
+
+    public LocalDateTime getLeaseUntil() {
+        return leaseUntil;
+    }
+
+    public void setLeaseUntil(LocalDateTime leaseUntil) {
+        this.leaseUntil = leaseUntil;
+    }
+
+    public LocalDateTime getNextRetryAt() {
+        return nextRetryAt;
+    }
+
+    public void setNextRetryAt(LocalDateTime nextRetryAt) {
+        this.nextRetryAt = nextRetryAt;
+    }
+
+    public String getLastError() {
+        return lastError;
+    }
+
+    public void setLastError(String lastError) {
+        this.lastError = lastError;
+    }
+
+    public Integer getVersion() {
+        return version;
+    }
+
+    public void setVersion(Integer version) {
+        this.version = version;
     }
 
     public LocalDateTime getPublishedAt() {

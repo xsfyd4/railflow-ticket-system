@@ -178,3 +178,62 @@ WHERE request_id = '替换成真实值';
 
 死信队列中的消息不会自动重放。应先查 `order_request.fail_reason` 和 `backend/logs/mq.log`，
 修复原因后再决定是否人工重新投递。
+
+## 8. 异步流程状态机与双游标恢复
+
+2026-11-02 新增持久化流程状态：
+
+```text
+CREATED
+→ RESERVING
+→ RESERVED
+→ PUBLISHING
+→ PUBLISHED
+→ PROCESSING
+→ SUCCEEDED
+```
+
+失败分支：
+
+```text
+任意活跃状态
+→ RELEASING
+→ FAILED
+
+状态无法判定
+→ MANUAL_REVIEW
+```
+
+`order_request` 保存当前状态、库存预扣/释放标记、ownerToken、租约和下次重试时间。
+每次状态变化追加写入 `order_flow_event`，事件只增不改。
+
+Redis 预扣 Lua 现在会在同一车次 Hash Tag 中原子完成：
+
+```text
+检查对账租约
+→ 检查所有车段库存
+→ 统一 DECRBY
+→ 写 reservation Hash
+→ ZADD 到该日期车次的 pending ZSET
+```
+
+失败补偿 Lua 会先检查 reservation 状态，只有 `RESERVED` 才统一回补，成功后标记
+`RELEASED`；订单成功则标记 `SOLD`。这避免同一请求重复回补。
+
+RabbitMQ 开启 correlated Publisher Confirm、mandatory return 和持久队列。
+只有收到 ACK 且没有 returned message 时，数据库才写入 `published_at`。
+
+恢复任务使用两种策略：
+
+```text
+每 5 秒：
+  order_flow_event.event_id 增量游标
+  → 只处理新状态事件
+
+每 10 分钟：
+  order_request.id 全量游标
+  → 每次最多处理 20 批
+  → 发现遗漏事件、卡死状态和未完成补偿
+```
+
+两个游标持久化在 `maintenance_cursor`，服务重启后从上次位置继续。

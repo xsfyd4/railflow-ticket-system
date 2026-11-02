@@ -23,6 +23,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Consumer;
 
 /**
  * Redis 分段数字库存。
@@ -42,12 +43,15 @@ public class TicketStockCache {
      * 会落在同一个 slot，Lua 才能一次原子操作多段库存。
      */
     private static final String KEY_PREFIX = "ticket:stock:";
+    private static final String RESERVATION_PREFIX = "ticket:reservation:";
+    private static final String PENDING_RESERVATION_PREFIX =
+            "ticket:reservation:pending:";
     private static final String RECONCILE_LOCK_PREFIX =
             "ticket:stock-reconcile:{";
 
     /**
      * 所有 Key 都存在且都够票才扣减。
-     * 返回 1=扣减成功，0=某段余票不足，-1=某段数字库存尚未初始化。
+     * 返回 1=成功，0=余票不足，-2=正在对账，-3=该请求已预扣。
      */
     private static final DefaultRedisScript<Long> RESERVE_SCRIPT =
             new DefaultRedisScript<>("""
@@ -55,15 +59,78 @@ public class TicketStockCache {
                     if redis.call('EXISTS', KEYS[1]) == 1 then
                         return -2
                     end
-                    for i = 2, #KEYS do
+                    if redis.call('EXISTS', KEYS[2]) == 1 then
+                        return -3
+                    end
+                    for i = 4, #KEYS do
                         local remain = tonumber(redis.call('GET', KEYS[i]))
                         if not remain or remain < count then
                             return 0
                         end
                     end
-                    for i = 2, #KEYS do
+                    for i = 4, #KEYS do
                         redis.call('DECRBY', KEYS[i], count)
                     end
+                    redis.call('HSET', KEYS[2],
+                        'requestId', ARGV[2],
+                        'trainId', ARGV[3],
+                        'seatType', ARGV[4],
+                        'fromSegmentIndex', ARGV[5],
+                        'toSegmentIndex', ARGV[6],
+                        'count', count,
+                        'state', 'RESERVED',
+                        'reservedAt', ARGV[7])
+                    redis.call('PEXPIRE', KEYS[2], ARGV[8])
+                    redis.call('ZADD', KEYS[3], ARGV[7], ARGV[2])
+                    redis.call('PEXPIRE', KEYS[3], ARGV[8])
+                    return 1
+                    """, Long.class);
+
+    /**
+     * 失败补偿：只有 reservation 仍是 RESERVED 时才回补，保证最多一次。
+     */
+    private static final DefaultRedisScript<Long> RELEASE_RESERVATION_SCRIPT =
+            new DefaultRedisScript<>("""
+                    if redis.call('EXISTS', KEYS[1]) == 0 then
+                        return -1
+                    end
+                    local state = redis.call('HGET', KEYS[1], 'state')
+                    if state == 'RELEASED' then
+                        return 0
+                    end
+                    if state ~= 'RESERVED' then
+                        return -3
+                    end
+                    if redis.call('EXISTS', KEYS[2]) == 1 then
+                        return -2
+                    end
+                    local count = tonumber(redis.call(
+                        'HGET', KEYS[1], 'count'))
+                    for i = 4, #KEYS do
+                        if redis.call('EXISTS', KEYS[i]) == 0 then
+                            return -4
+                        end
+                    end
+                    for i = 4, #KEYS do
+                        redis.call('INCRBY', KEYS[i], count)
+                    end
+                    redis.call('HSET', KEYS[1],
+                        'state', 'RELEASED',
+                        'releasedAt', ARGV[1])
+                    redis.call('PEXPIRE', KEYS[1], ARGV[2])
+                    redis.call('ZREM', KEYS[3], ARGV[3])
+                    return 1
+                    """, Long.class);
+
+    /** 下单成功后把 reservation 标记为 SOLD，并从待恢复索引移除。 */
+    private static final DefaultRedisScript<Long> COMPLETE_RESERVATION_SCRIPT =
+            new DefaultRedisScript<>("""
+                    if redis.call('EXISTS', KEYS[1]) == 0 then
+                        return 0
+                    end
+                    redis.call('HSET', KEYS[1], 'state', 'SOLD')
+                    redis.call('PEXPIRE', KEYS[1], ARGV[1])
+                    redis.call('ZREM', KEYS[2], ARGV[2])
                     return 1
                     """, Long.class);
 
@@ -126,7 +193,8 @@ public class TicketStockCache {
      *
      * @return RESERVED=成功；NOT_ENOUGH=至少一段不够；UNAVAILABLE=Redis 不可用/未启用
      */
-    public ReserveResult tryReserve(LocalDate travelDate,
+    public ReserveResult tryReserve(String requestId,
+                                    LocalDate travelDate,
                                     Long trainId,
                                     Integer seatType,
                                     int fromSegmentIndex,
@@ -140,12 +208,16 @@ public class TicketStockCache {
         List<TicketStock> rows = requireRows(
                 travelDate, trainId, seatType,
                 fromSegmentIndex, toSegmentIndex);
-        List<String> keys = rows.stream()
+        List<String> stockKeys = rows.stream()
                 .map(row -> key(travelDate, trainId, seatType,
                         row.getSegmentIndex()))
                 .collect(java.util.stream.Collectors.toCollection(
                         ArrayList::new));
-        keys.add(0, reconcileLockKey(travelDate, trainId));
+        List<String> keys = new ArrayList<>();
+        keys.add(reconcileLockKey(travelDate, trainId));
+        keys.add(reservationKey(travelDate, trainId, requestId));
+        keys.add(pendingReservationKey(travelDate, trainId));
+        keys.addAll(stockKeys);
 
         try {
             /*
@@ -162,7 +234,15 @@ public class TicketStockCache {
             }
 
             Long result = redis.execute(
-                    RESERVE_SCRIPT, keys, String.valueOf(count));
+                    RESERVE_SCRIPT, keys,
+                    String.valueOf(count),
+                    requestId,
+                    String.valueOf(trainId),
+                    String.valueOf(seatType),
+                    String.valueOf(fromSegmentIndex),
+                    String.valueOf(toSegmentIndex),
+                    String.valueOf(System.currentTimeMillis()),
+                    String.valueOf(stockTtl(travelDate).toMillis()));
             if (result != null && result == 1L) {
                 reserved.increment();
                 return ReserveResult.RESERVED;
@@ -172,6 +252,9 @@ public class TicketStockCache {
                 log.info("库存正在对账，暂缓预扣，date={}，trainId={}",
                         travelDate, trainId);
                 return ReserveResult.UNAVAILABLE;
+            }
+            if (result != null && result == -3L) {
+                return ReserveResult.ALREADY_RESERVED;
             }
             rejected.increment();
             return ReserveResult.NOT_ENOUGH;
@@ -208,6 +291,123 @@ public class TicketStockCache {
                 fromSegmentIndex, toSegmentIndex, count));
     }
 
+    public void releaseReservationAfterCommit(
+            String requestId,
+            LocalDate travelDate,
+            Long trainId,
+            Integer seatType,
+            int fromSegmentIndex,
+            int toSegmentIndex,
+            Consumer<ReleaseResult> resultHandler) {
+        runAfterCommit(() -> {
+            ReleaseResult result = releaseReservationNow(
+                    requestId, travelDate, trainId, seatType,
+                    fromSegmentIndex, toSegmentIndex);
+            if (resultHandler != null) {
+                resultHandler.accept(result);
+            }
+        });
+    }
+
+    public void completeReservationAfterCommit(
+            String requestId,
+            LocalDate travelDate,
+            Long trainId) {
+        runAfterCommit(() -> completeReservationNow(
+                requestId, travelDate, trainId));
+    }
+
+    public boolean reservationExists(String requestId,
+                                     LocalDate travelDate,
+                                     Long trainId) {
+        if (!enabled) {
+            return false;
+        }
+        try {
+            return Boolean.TRUE.equals(redis.hasKey(
+                    reservationKey(travelDate, trainId, requestId)));
+        } catch (Exception e) {
+            unavailable.increment();
+            return false;
+        }
+    }
+
+    public ReleaseResult releaseReservationNow(
+            String requestId,
+            LocalDate travelDate,
+            Long trainId,
+            Integer seatType,
+            int fromSegmentIndex,
+            int toSegmentIndex) {
+        if (!enabled) {
+            return ReleaseResult.UNAVAILABLE;
+        }
+        try {
+            List<String> keys = reservationKeys(
+                    requestId, travelDate, trainId, seatType,
+                    fromSegmentIndex, toSegmentIndex);
+            Long result = redis.execute(
+                    RELEASE_RESERVATION_SCRIPT,
+                    keys,
+                    String.valueOf(System.currentTimeMillis()),
+                    String.valueOf(stockTtl(travelDate).toMillis()),
+                    requestId);
+            if (result != null && result == 1L) {
+                return ReleaseResult.RELEASED;
+            }
+            if (result != null && result == 0L) {
+                return ReleaseResult.ALREADY_RELEASED;
+            }
+            if (result != null && result == -1L) {
+                boolean refreshed = refreshRange(travelDate, trainId, seatType,
+                        fromSegmentIndex, toSegmentIndex);
+                return refreshed
+                        ? ReleaseResult.MARKER_MISSING
+                        : ReleaseResult.UNAVAILABLE;
+            }
+            if (result != null && result == -2L) {
+                return ReleaseResult.RECONCILING;
+            }
+            if (result != null && result == -4L) {
+                boolean refreshed = refreshRange(travelDate, trainId, seatType,
+                        fromSegmentIndex, toSegmentIndex);
+                return refreshed
+                        ? ReleaseResult.KEYS_MISSING
+                        : ReleaseResult.UNAVAILABLE;
+            }
+            return ReleaseResult.MANUAL_REVIEW;
+        } catch (Exception e) {
+            unavailable.increment();
+            log.error("释放 Redis reservation 失败，requestId={}，date={}，trainId={}",
+                    requestId, travelDate, trainId, e);
+            return ReleaseResult.UNAVAILABLE;
+        }
+    }
+
+    public boolean completeReservationNow(
+            String requestId,
+            LocalDate travelDate,
+            Long trainId) {
+        if (!enabled) {
+            return false;
+        }
+        try {
+            Long result = redis.execute(
+                    COMPLETE_RESERVATION_SCRIPT,
+                    List.of(
+                            reservationKey(travelDate, trainId, requestId),
+                            pendingReservationKey(travelDate, trainId)),
+                    String.valueOf(stockTtl(travelDate).toMillis()),
+                    requestId);
+            return result != null && result == 1L;
+        } catch (Exception e) {
+            unavailable.increment();
+            log.warn("完成 Redis reservation 标记失败，requestId={}：{}",
+                    requestId, e.getMessage());
+            return false;
+        }
+    }
+
     /** 管理员调整库存后，以 MySQL 值整体刷新该区间。 */
     public void refreshAfterCommit(LocalDate travelDate,
                                    Long trainId,
@@ -236,13 +436,13 @@ public class TicketStockCache {
     }
 
     /** 供对账工具和管理员维护使用：以 MySQL 当前余票覆盖 Redis。 */
-    public void refreshRange(LocalDate travelDate,
+    public boolean refreshRange(LocalDate travelDate,
                              Long trainId,
                              Integer seatType,
                              int fromSegmentIndex,
                              int toSegmentIndex) {
         if (!enabled) {
-            return;
+            return false;
         }
         try {
             List<TicketStock> rows = requireRows(
@@ -258,10 +458,12 @@ public class TicketStockCache {
             log.info("Redis 分段库存已从 MySQL 对账，date={}，trainId={}，seat={}，segments={}-{}",
                     travelDate, trainId, seatType,
                     fromSegmentIndex, toSegmentIndex);
+            return true;
         } catch (Exception e) {
             unavailable.increment();
             log.error("Redis 分段库存对账失败，date={}，trainId={}，seat={}",
                     travelDate, trainId, seatType, e);
+            return false;
         }
     }
 
@@ -273,6 +475,20 @@ public class TicketStockCache {
         return KEY_PREFIX
                 + "{" + travelDate + ":" + trainId + "}"
                 + ":" + seatType + ":" + segmentIndex;
+    }
+
+    public String reservationKey(LocalDate travelDate,
+                                 Long trainId,
+                                 String requestId) {
+        return RESERVATION_PREFIX
+                + "{" + travelDate + ":" + trainId + "}:"
+                + requestId;
+    }
+
+    public String pendingReservationKey(LocalDate travelDate,
+                                        Long trainId) {
+        return PENDING_RESERVATION_PREFIX
+                + "{" + travelDate + ":" + trainId + "}";
     }
 
     public boolean warmupIfAbsent(TicketStock row) {
@@ -457,6 +673,25 @@ public class TicketStockCache {
         return RECONCILE_LOCK_PREFIX + travelDate + ":" + trainId + "}";
     }
 
+    private List<String> reservationKeys(
+            String requestId,
+            LocalDate travelDate,
+            Long trainId,
+            Integer seatType,
+            int fromSegmentIndex,
+            int toSegmentIndex) {
+        List<String> keys = new ArrayList<>();
+        keys.add(reservationKey(travelDate, trainId, requestId));
+        keys.add(reconcileLockKey(travelDate, trainId));
+        keys.add(pendingReservationKey(travelDate, trainId));
+        for (int segment = fromSegmentIndex;
+             segment <= toSegmentIndex;
+             segment++) {
+            keys.add(key(travelDate, trainId, seatType, segment));
+        }
+        return keys;
+    }
+
     private void runAfterCommit(Runnable action) {
         if (TransactionSynchronizationManager.isActualTransactionActive()
                 && TransactionSynchronizationManager.isSynchronizationActive()) {
@@ -474,7 +709,18 @@ public class TicketStockCache {
 
     public enum ReserveResult {
         RESERVED,
+        ALREADY_RESERVED,
         NOT_ENOUGH,
+        UNAVAILABLE
+    }
+
+    public enum ReleaseResult {
+        RELEASED,
+        ALREADY_RELEASED,
+        MARKER_MISSING,
+        KEYS_MISSING,
+        RECONCILING,
+        MANUAL_REVIEW,
         UNAVAILABLE
     }
 }

@@ -1,5 +1,31 @@
 # MQ 操作日志
 
+## 2026-11-02：RabbitMQ 发布确认与流程状态
+
+**配置**
+
+```text
+publisher-confirm-type=correlated
+publisher-returns=true
+template.mandatory=true
+publish-confirm-timeout-ms=3000
+```
+
+**行为**
+
+- `convertAndSend` 后等待 CorrelationData Confirm。
+- 只有 ACK 且没有 ReturnedMessage 时，才标记 `published_at` 和 `PUBLISHED`。
+- NACK、超时或无法路由时保留 `published_at=NULL`，由恢复任务重新投递。
+- 超时后消息仍可能已到达 Broker，重复投递由请求状态和消费者行锁去重。
+
+**验证**
+
+- 真实 RabbitMQ 异步下单集成测试通过。
+- 最终流程状态为 `SUCCEEDED`。
+- 队列无积压和未确认消息。
+- 容器环境再提交 10 笔真实 HTTP 异步订单，全部成功，队列仍为
+  0 ready、0 unacknowledged。
+
 ## 2026-10-28：RabbitMQ 异步下单正式链路压测
 
 **方法**

@@ -321,9 +321,23 @@ CREATE TABLE `order_request` (
   `to_segment_index`   INT          NOT NULL,
   `passenger_count`    INT          NOT NULL,
   `status`             TINYINT      NOT NULL DEFAULT 0
-                         COMMENT '0=已提交，1=已预扣排队，2=处理中，3=成功，4=失败',
+                         COMMENT '0=已提交，1=已预扣排队，2=处理中，3=成功，4=失败，5=失败补偿中',
   `stock_reserved`     TINYINT      NOT NULL DEFAULT 0
                          COMMENT '是否已在 Redis 预扣库存：0=否，1=是',
+  `stock_released`     TINYINT      NOT NULL DEFAULT 0
+                         COMMENT '失败补偿是否已释放 Redis 库存：0=否，1=是',
+  `flow_state`         VARCHAR(32)  NOT NULL DEFAULT 'CREATED'
+                         COMMENT '技术流程状态',
+  `owner_token`        VARCHAR(64)           DEFAULT NULL
+                         COMMENT '当前步骤处理者令牌',
+  `lease_until`        DATETIME              DEFAULT NULL
+                         COMMENT '当前步骤租约截止时间',
+  `next_retry_at`      DATETIME              DEFAULT NULL
+                         COMMENT '下一次恢复扫描时间',
+  `last_error`         VARCHAR(500)          DEFAULT NULL
+                         COMMENT '最近一次技术错误',
+  `version`            INT          NOT NULL DEFAULT 0
+                         COMMENT '流程状态乐观锁版本',
   `published_at`       DATETIME              DEFAULT NULL
                          COMMENT '成功投递到 RabbitMQ 的时间',
   `order_id`           BIGINT                DEFAULT NULL,
@@ -335,8 +349,38 @@ CREATE TABLE `order_request` (
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_order_request` (`request_id`),
   KEY `idx_order_request_user` (`user_id`, `created_at`),
-  KEY `idx_order_request_status` (`status`, `created_at`)
+  KEY `idx_order_request_status` (`status`, `created_at`),
+  KEY `idx_order_request_flow` (`flow_state`, `next_retry_at`, `id`),
+  KEY `idx_order_request_updated` (`updated_at`, `id`)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '异步下单请求表';
+
+-- 13-A. 异步流程状态变化流水。只追加，不原地修改。
+DROP TABLE IF EXISTS `order_flow_event`;
+CREATE TABLE `order_flow_event` (
+  `event_id`       BIGINT       NOT NULL AUTO_INCREMENT,
+  `request_id`     VARCHAR(64)  NOT NULL,
+  `from_state`     VARCHAR(32)           DEFAULT NULL,
+  `to_state`       VARCHAR(32)  NOT NULL,
+  `owner_token`    VARCHAR(64)           DEFAULT NULL,
+  `detail`         VARCHAR(500)          DEFAULT NULL,
+  `created_at`     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`event_id`),
+  KEY `idx_flow_event_request` (`request_id`, `event_id`),
+  KEY `idx_flow_event_created` (`created_at`, `event_id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+  COMMENT = '异步下单流程状态变化流水';
+
+-- 13-B. 恢复任务持久化游标。
+DROP TABLE IF EXISTS `maintenance_cursor`;
+CREATE TABLE `maintenance_cursor` (
+  `job_name`       VARCHAR(64) NOT NULL,
+  `last_event_id`  BIGINT      NOT NULL DEFAULT 0,
+  `full_last_id`   BIGINT      NOT NULL DEFAULT 0,
+  `updated_at`     DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP
+                                ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`job_name`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+  COMMENT = '后台扫描任务持久化游标';
 
 
 -- 14. 管理端操作日志（阶段 6 再接入）

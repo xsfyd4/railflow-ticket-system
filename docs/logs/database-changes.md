@@ -1,5 +1,29 @@
 # 数据库操作日志
 
+## 2026-11-02：异步下单状态机与扫描游标
+
+**迁移**
+
+- `sql/08-order-flow-reliability.sql`
+- 新数据库结构同步更新 `sql/01-schema.sql`
+
+**变更**
+
+- `order_request` 增加 `stock_released`、`flow_state`、`owner_token`、
+  `lease_until`、`next_retry_at`、`last_error`、`version`。
+- 新增 `(flow_state,next_retry_at,id)` 和 `(updated_at,id)` 索引。
+- 新增 append-only `order_flow_event`。
+- 新增持久化游标 `maintenance_cursor`。
+- 现有 210 条成功请求回填为 `SUCCEEDED`。
+- 历史请求回填事件后，事件游标从最大 event_id 开始，避免重复处理历史数据。
+- `status=5` 表示失败补偿中；Redis reservation 释放前仍计入活跃请求，
+  防止库存对账与补偿重复加票，释放完成后才进入 `status=4`。
+
+**验证**
+
+- 表、字段、索引和流水行数检查通过。
+- 状态机、事件游标和全量审计测试通过。
+
 ## 2026-10-28：综合读写压测产生的订单与库存验证
 
 **写入**

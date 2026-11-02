@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.ticket.module.order.mapper.MaintenanceCursorMapper">
+
+    <select id="findLastEventId" resultType="java.lang.Long">
+        SELECT last_event_id
+        FROM maintenance_cursor
+        WHERE job_name = #{jobName}
+    </select>
+
+    <select id="findFullLastId" resultType="java.lang.Long">
+        SELECT full_last_id
+        FROM maintenance_cursor
+        WHERE job_name = #{jobName}
+    </select>
+
+    <insert id="updateLastEventId">
+        INSERT INTO maintenance_cursor (job_name, last_event_id)
+        VALUES (#{jobName}, #{lastEventId})
+        ON DUPLICATE KEY UPDATE
+            last_event_id = GREATEST(last_event_id, VALUES(last_event_id))
+    </insert>
+
+    <insert id="updateFullLastId">
+        INSERT INTO maintenance_cursor (job_name, full_last_id)
+        VALUES (#{jobName}, #{fullLastId})
+        ON DUPLICATE KEY UPDATE
+            full_last_id = VALUES(full_last_id)
+    </insert>
+</mapper>

@@ -1,5 +1,29 @@
 # 代码变更日志
 
+## 2026-11-02：异步下单状态机与双游标恢复
+
+**新增**
+
+- `OrderFlowState`、`OrderRequestFlowService`：异步请求技术状态机。
+- `OrderFlowEventMapper`：append-only 状态流水。
+- `MaintenanceCursorMapper`：持久化事件游标和全量扫描游标。
+- `OrderFlowRecoveryIntegrationTest`：覆盖事件游标与全量审计恢复。
+
+**修改**
+
+- `OrderAsyncServiceImpl` 先创建流程记录，再推进 RESERVING、RESERVED、PUBLISHING、PUBLISHED。
+- RabbitMQ 开启 Publisher Confirm，只有 ACK 后才写 `published_at`。
+- 恢复任务改为 5 秒事件增量 + 10 分钟全量审计。
+- Redis Lua 原子写入 reservation Hash 和同车次 pending ZSET。
+- 异步失败补偿按 reservation 状态最多回补一次。
+- 失败补偿期间使用 `status=5` 保持请求活跃，释放完成后才改为 `status=4`。
+- 消费者只允许从 RESERVED/PUBLISHING/PUBLISHED 进入 PROCESSING，避免补偿中的请求重新成单。
+
+**验证**
+
+- 完整后端测试 73 项：69 通过、4 个手工基准跳过、0 失败。
+- 真实 HTTP 异步下单 10 笔全部成功，最终流程状态均为 `SUCCEEDED`。
+
 ## 2026-10-28：GitHub 提交前清理
 
 **配置安全**

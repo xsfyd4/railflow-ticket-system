@@ -22,11 +22,14 @@ public class OrderRequestFailureService {
 
     private final OrderRequestMapper requestMapper;
     private final TicketStockCache stockCache;
+    private final OrderRequestFlowService flowService;
 
     public OrderRequestFailureService(OrderRequestMapper requestMapper,
-                                      TicketStockCache stockCache) {
+                                      TicketStockCache stockCache,
+                                      OrderRequestFlowService flowService) {
         this.requestMapper = requestMapper;
         this.stockCache = stockCache;
+        this.flowService = flowService;
     }
 
     @Transactional(rollbackFor = Exception.class)
@@ -40,33 +43,35 @@ public class OrderRequestFailureService {
 
         String safeReason = reason == null || reason.isBlank()
                 ? "异步下单处理失败" : reason;
-        int affected = requestMapper.markFailed(requestId, safeReason);
-        if (affected != 1) {
+        if (!flowService.markReleasing(
+                requestId, request.getFlowState(),
+                safeReason, java.time.Duration.ofSeconds(30))) {
             return false;
         }
-
-        if (request.getStockReserved() != null
-                && request.getStockReserved() == 1) {
-            stockCache.incrementAfterCommit(
-                    request.getTravelDate(),
-                    request.getTrainId(),
-                    request.getSeatType(),
-                    request.getFromSegmentIndex(),
-                    request.getToSegmentIndex(),
-                    request.getPassengerCount());
-        } else {
-            /*
-             * status=0 时理论上还没预扣；如果进程恰好死在 Lua 成功与
-             * stock_reserved=1 之间，Redis 可能多扣了。用 MySQL 值覆盖
-             * 这段区间，修复这个极小的崩溃窗口。
-             */
-            stockCache.refreshAfterCommit(
-                    request.getTravelDate(),
-                    request.getTrainId(),
-                    request.getSeatType(),
-                    request.getFromSegmentIndex(),
-                    request.getToSegmentIndex());
-        }
+        /*
+         * 无论数据库是否已经记录 stock_reserved=1，都尝试释放 reservation。
+         * Lua 成功但 DB 未来得及更新的崩溃窗口也由这条路径修复。
+         */
+        stockCache.releaseReservationAfterCommit(
+                requestId,
+                request.getTravelDate(),
+                request.getTrainId(),
+                request.getSeatType(),
+                request.getFromSegmentIndex(),
+                request.getToSegmentIndex(),
+                result -> {
+                    if (result == TicketStockCache.ReleaseResult.RELEASED
+                            || result == TicketStockCache.ReleaseResult.ALREADY_RELEASED
+                            || result == TicketStockCache.ReleaseResult.MARKER_MISSING
+                            || result == TicketStockCache.ReleaseResult.KEYS_MISSING) {
+                        flowService.markStockReleased(requestId);
+                    } else if (result == TicketStockCache.ReleaseResult.MANUAL_REVIEW) {
+                        flowService.markManualReview(
+                                requestId,
+                                request.getFlowState(),
+                                "Redis reservation 状态异常，需要人工对账");
+                    }
+                });
 
         log.warn("异步下单请求失败，requestId={}，reason={}",
                 requestId, safeReason);

@@ -1,5 +1,44 @@
 # Redis 操作日志
 
+## 2026-11-02：预约标记与失败补偿
+
+**Key**
+
+```text
+ticket:reservation:{日期:车次}:{requestId}
+ticket:reservation:pending:{日期:车次}
+```
+
+**预扣 Lua**
+
+```text
+检查对账租约
+→ 检查 reservation 是否已存在
+→ 检查所有车段库存
+→ 统一 DECRBY
+→ 写 reservation Hash
+→ ZADD pending ZSET
+→ 统一设置 TTL
+```
+
+**状态**
+
+```text
+RESERVED → RELEASED
+RESERVED → SOLD
+```
+
+- 失败回补只允许 `RESERVED → RELEASED`，重复释放返回已释放。
+- 下单成功后 reservation 只标记 SOLD 并 ZREM，不重复增加库存。
+- reservation 缺失或车段 Key 缺失时，从 MySQL 精确覆盖库存。
+- 失败补偿期间请求保持活跃状态，库存对账不会与 reservation 释放并发回填。
+
+**验证**
+
+- 重复预扣返回 `ALREADY_RESERVED`。
+- 重复释放返回 `ALREADY_RELEASED`，库存只增加一次。
+- 异步下单完成后 reservation 状态为 SOLD。
+
 ## 2026-10-28：冷缓存重建锁与 TTL 抖动
 
 **Key**

@@ -1,95 +1,272 @@
 package com.ticket.module.order.job;
 
+import com.ticket.module.order.OrderFlowState;
+import com.ticket.module.order.entity.OrderFlowEvent;
 import com.ticket.module.order.entity.OrderRequest;
 import com.ticket.module.order.impl.AsyncOrderPublisher;
 import com.ticket.module.order.impl.OrderRequestFailureService;
+import com.ticket.module.order.impl.OrderRequestFlowService;
+import com.ticket.module.order.mapper.MaintenanceCursorMapper;
+import com.ticket.module.order.mapper.OrderFlowEventMapper;
 import com.ticket.module.order.mapper.OrderRequestMapper;
+import com.ticket.module.stock.TicketStockCache;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
 
 /**
- * 异步下单恢复任务，处理应用在“写数据库”和“发 MQ”之间崩溃的窗口。
+ * 异步下单双模式恢复任务。
+ *
+ * <p>短周期按 order_flow_event.event_id 增量处理；低频按
+ * order_request.id 游标全量审计，修复遗漏事件和卡死状态。
  */
 @Component
 public class OrderRequestRecoveryJob {
 
     private static final Logger log =
             LoggerFactory.getLogger("com.ticket.mq.OrderRequestRecoveryJob");
+    private static final String JOB_NAME = "ORDER_FLOW";
 
     private final OrderRequestMapper requestMapper;
+    private final OrderFlowEventMapper eventMapper;
+    private final MaintenanceCursorMapper cursorMapper;
     private final AsyncOrderPublisher publisher;
     private final OrderRequestFailureService failureService;
+    private final OrderRequestFlowService flowService;
+    private final TicketStockCache stockCache;
     private final int batchSize;
-    private final long republishDelaySeconds;
+    private final long eventDelaySeconds;
     private final long staleMinutes;
+    private final int fullBatchesPerRun;
 
     public OrderRequestRecoveryJob(
             OrderRequestMapper requestMapper,
+            OrderFlowEventMapper eventMapper,
+            MaintenanceCursorMapper cursorMapper,
             AsyncOrderPublisher publisher,
             OrderRequestFailureService failureService,
+            OrderRequestFlowService flowService,
+            TicketStockCache stockCache,
             @Value("${ticket.order.async.recovery-batch-size:100}")
             int batchSize,
-            @Value("${ticket.order.async.republish-delay-seconds:30}")
-            long republishDelaySeconds,
+            @Value("${ticket.order.async.event-delay-seconds:10}")
+            long eventDelaySeconds,
             @Value("${ticket.order.async.stale-minutes:10}")
-            long staleMinutes) {
+            long staleMinutes,
+            @Value("${ticket.order.async.full-batches-per-run:20}")
+            int fullBatchesPerRun) {
         this.requestMapper = requestMapper;
+        this.eventMapper = eventMapper;
+        this.cursorMapper = cursorMapper;
         this.publisher = publisher;
         this.failureService = failureService;
+        this.flowService = flowService;
+        this.stockCache = stockCache;
         this.batchSize = Math.max(1, Math.min(batchSize, 500));
-        this.republishDelaySeconds = Math.max(1, republishDelaySeconds);
+        this.eventDelaySeconds = Math.max(1, eventDelaySeconds);
         this.staleMinutes = Math.max(1, staleMinutes);
+        this.fullBatchesPerRun = Math.max(1, fullBatchesPerRun);
     }
 
     @Scheduled(
             fixedDelayString = "${ticket.order.async.recovery-scan-ms:30000}",
-            initialDelayString = "${ticket.order.async.recovery-initial-delay-ms:30000}"
+            initialDelayString =
+                    "${ticket.order.async.recovery-initial-delay-ms:30000}"
     )
-    public void recover() {
-        republishMissingMessages();
-        failStaleRequests();
+    public void recoverByEvents() {
+        long lastEventId = valueOrZero(
+                cursorMapper.findLastEventId(JOB_NAME));
+        List<OrderFlowEvent> events = eventMapper.findDueAfter(
+                lastEventId,
+                LocalDateTime.now().minusSeconds(eventDelaySeconds),
+                batchSize);
+        for (OrderFlowEvent event : events) {
+            try {
+                repairRequest(event.getRequestId());
+            } catch (Exception e) {
+                log.error("流程流水恢复失败，eventId={}，requestId={}",
+                        event.getEventId(), event.getRequestId(), e);
+            }
+            // 单条异常不阻塞后续事件，全量扫描会继续兜底。
+            cursorMapper.updateLastEventId(
+                    JOB_NAME, event.getEventId());
+        }
     }
 
-    private void republishMissingMessages() {
-        LocalDateTime before = LocalDateTime.now()
-                .minusSeconds(republishDelaySeconds);
-        List<OrderRequest> requests =
-                requestMapper.findUnpublishedQueued(before, batchSize);
-        for (OrderRequest request : requests) {
-            try {
-                publisher.publish(request.getRequestId());
-                requestMapper.markPublished(
-                        request.getRequestId(), LocalDateTime.now());
-                log.warn("恢复任务补投异步下单消息，requestId={}",
-                        request.getRequestId());
-            } catch (Exception e) {
-                // 保留 published_at=NULL，下一轮继续补投。
-                log.error("恢复任务补投失败，requestId={}",
-                        request.getRequestId(), e);
+    @Scheduled(
+            fixedDelayString =
+                    "${ticket.order.async.full-scan-ms:600000}",
+            initialDelayString =
+                    "${ticket.order.async.full-scan-initial-delay-ms:120000}"
+    )
+    public void fullAudit() {
+        long lastId = valueOrZero(cursorMapper.findFullLastId(JOB_NAME));
+        for (int batch = 0; batch < fullBatchesPerRun; batch++) {
+            List<OrderRequest> requests =
+                    requestMapper.findRecoverablePage(lastId, batchSize);
+            if (requests.isEmpty()) {
+                cursorMapper.updateFullLastId(JOB_NAME, 0L);
+                return;
+            }
+            for (OrderRequest request : requests) {
+                try {
+                    repairRequest(request.getRequestId());
+                } catch (Exception e) {
+                    log.error("流程全量审计失败，requestId={}",
+                            request.getRequestId(), e);
+                }
+            }
+            lastId = requests.get(requests.size() - 1).getId();
+            cursorMapper.updateFullLastId(JOB_NAME, lastId);
+            if (requests.size() < batchSize) {
+                cursorMapper.updateFullLastId(JOB_NAME, 0L);
+                return;
             }
         }
     }
 
-    private void failStaleRequests() {
-        LocalDateTime before = LocalDateTime.now().minusMinutes(staleMinutes);
-        List<OrderRequest> requests =
-                requestMapper.findStaleActive(before, batchSize);
-        for (OrderRequest request : requests) {
-            try {
-                failureService.fail(request.getRequestId(),
-                        "异步下单处理超时，请重新提交");
-                log.warn("恢复任务终止卡死请求，requestId={}",
-                        request.getRequestId());
-            } catch (Exception e) {
-                log.error("恢复任务终止请求失败，requestId={}",
-                        request.getRequestId(), e);
+    private void repairRequest(String requestId) {
+        OrderRequest request = requestMapper.findByRequestId(requestId);
+        if (request == null || request.getStatus() == null) {
+            return;
+        }
+        OrderFlowState state = parseFlowState(request.getFlowState());
+        if (state == OrderFlowState.SUCCEEDED
+                || state == OrderFlowState.MANUAL_REVIEW) {
+            return;
+        }
+        if (request.getStatus() == 4
+                && Integer.valueOf(1).equals(request.getStockReleased())) {
+            return;
+        }
+        if (request.getStatus() == 4
+                || request.getStatus() == 5
+                || state == OrderFlowState.RELEASING) {
+            compensate(request);
+            return;
+        }
+        if (!isDue(request, state)) {
+            return;
+        }
+        switch (state) {
+            case CREATED -> failureService.fail(
+                requestId, "异步下单请求长时间未开始预扣");
+            case RESERVING -> {
+                if (stockCache.reservationExists(
+                        requestId,
+                        request.getTravelDate(),
+                        request.getTrainId())) {
+                    if (flowService.markReserved(
+                            requestId,
+                            request.getOwnerToken(),
+                            Duration.ofSeconds(30))) {
+                        OrderRequest updated =
+                                requestMapper.findByRequestId(requestId);
+                        publishReserved(updated);
+                    }
+                } else {
+                    failureService.fail(
+                            requestId,
+                            "Redis 预扣结果不存在，已按 MySQL 对账");
+                }
+            }
+            case RESERVED, PUBLISHING -> publishReserved(request);
+            case PUBLISHED -> republishIfStale(request);
+            case PROCESSING -> failureService.fail(
+                    requestId, "异步下单消费者处理超时");
+            case FAILED, SUCCEEDED, MANUAL_REVIEW -> {
+                // 终态不重复处理。
             }
         }
+    }
+
+    private void publishReserved(OrderRequest request) {
+        if (request == null || request.getStatus() == null
+                || request.getStatus() == 4) {
+            return;
+        }
+        if (!flowService.markPublishing(
+                request.getRequestId(), Duration.ofSeconds(10))) {
+            OrderRequest latest =
+                    requestMapper.findByRequestId(request.getRequestId());
+            if (latest != null && latest.getPublishedAt() == null
+                    && latest.getStatus() != null
+                    && latest.getStatus() != 4) {
+                throw new IllegalStateException(
+                        "流程状态无法进入 PUBLISHING");
+            }
+            return;
+        }
+        publisher.publish(request.getRequestId());
+        if (!flowService.markPublished(request.getRequestId())) {
+            throw new IllegalStateException(
+                    "RabbitMQ 已确认，但流程状态无法标记为 PUBLISHED");
+        }
+    }
+
+    private void republishIfStale(OrderRequest request) {
+        if (request.getUpdatedAt() == null
+                || request.getUpdatedAt().isAfter(
+                        LocalDateTime.now().minusMinutes(staleMinutes))) {
+            return;
+        }
+        publisher.publish(request.getRequestId());
+        log.warn("重复投递超时未消费的异步订单，requestId={}",
+                request.getRequestId());
+    }
+
+    private void compensate(OrderRequest request) {
+        TicketStockCache.ReleaseResult result =
+                stockCache.releaseReservationNow(
+                        request.getRequestId(),
+                        request.getTravelDate(),
+                        request.getTrainId(),
+                        request.getSeatType(),
+                        request.getFromSegmentIndex(),
+                        request.getToSegmentIndex());
+        if (result == TicketStockCache.ReleaseResult.RELEASED
+                || result == TicketStockCache.ReleaseResult.ALREADY_RELEASED
+                || result == TicketStockCache.ReleaseResult.MARKER_MISSING
+                || result == TicketStockCache.ReleaseResult.KEYS_MISSING) {
+            flowService.markStockReleased(request.getRequestId());
+            return;
+        }
+        if (result == TicketStockCache.ReleaseResult.MANUAL_REVIEW) {
+            flowService.markManualReview(
+                    request.getRequestId(),
+                    request.getFlowState(),
+                    "Redis reservation 状态异常，需要人工对账");
+        }
+    }
+
+    private boolean isDue(OrderRequest request, OrderFlowState state) {
+        LocalDateTime now = LocalDateTime.now();
+        if (state == OrderFlowState.RESERVING
+                || state == OrderFlowState.RESERVED
+                || state == OrderFlowState.PUBLISHING) {
+            return request.getNextRetryAt() == null
+                    || !request.getNextRetryAt().isAfter(now);
+        }
+        return request.getUpdatedAt() == null
+                || request.getUpdatedAt().isBefore(
+                        now.minusMinutes(staleMinutes));
+    }
+
+    private OrderFlowState parseFlowState(String value) {
+        try {
+            return OrderFlowState.valueOf(value);
+        } catch (Exception ignored) {
+            return OrderFlowState.MANUAL_REVIEW;
+        }
+    }
+
+    private long valueOrZero(Long value) {
+        return value == null ? 0L : value;
     }
 }

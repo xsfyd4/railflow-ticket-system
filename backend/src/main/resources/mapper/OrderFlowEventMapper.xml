@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.ticket.module.order.mapper.OrderFlowEventMapper">
+
+    <insert id="append">
+        INSERT INTO order_flow_event
+            (request_id, from_state, to_state, owner_token, detail)
+        VALUES
+            (#{requestId}, #{fromState}, #{toState},
+             #{ownerToken}, LEFT(#{detail}, 500))
+    </insert>
+
+    <select id="findDueAfter"
+            resultType="com.ticket.module.order.entity.OrderFlowEvent">
+        SELECT event_id, request_id, from_state, to_state,
+               owner_token, detail, created_at
+        FROM order_flow_event
+        WHERE event_id &gt; #{eventId}
+          AND created_at &lt;= #{createdBefore}
+        ORDER BY event_id
+        LIMIT #{limit}
+    </select>
+</mapper>

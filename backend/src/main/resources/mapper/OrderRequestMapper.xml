@@ -8,7 +8,9 @@
         id, request_id, user_id, payload_json,
         train_id, travel_date, seat_type,
         from_segment_index, to_segment_index, passenger_count,
-        status, stock_reserved, published_at,
+        status, stock_reserved, stock_released,
+        flow_state, owner_token, lease_until, next_retry_at,
+        last_error, version, published_at,
         order_id, order_no, fail_reason,
         created_at, updated_at
     </sql>
@@ -18,12 +20,12 @@
             (request_id, user_id, payload_json,
              train_id, travel_date, seat_type,
              from_segment_index, to_segment_index, passenger_count,
-             status, stock_reserved)
+             status, stock_reserved, stock_released, flow_state)
         VALUES
             (#{requestId}, #{userId}, #{payloadJson},
              #{trainId}, #{travelDate}, #{seatType},
              #{fromSegmentIndex}, #{toSegmentIndex}, #{passengerCount},
-             #{status}, #{stockReserved})
+             #{status}, #{stockReserved}, #{stockReleased}, #{flowState})
     </insert>
 
     <select id="findByRequestId"
@@ -49,28 +51,73 @@
         FOR UPDATE
     </select>
 
-    <update id="markQueued">
+    <update id="markReserving">
+        UPDATE order_request
+        SET flow_state = 'RESERVING',
+            owner_token = #{ownerToken},
+            lease_until = #{leaseUntil},
+            next_retry_at = #{nextRetryAt},
+            last_error = NULL,
+            version = version + 1
+        WHERE request_id = #{requestId}
+          AND flow_state = 'CREATED'
+          AND status = 0
+          AND stock_reserved = 0
+    </update>
+
+    <update id="markReserved">
         UPDATE order_request
         SET status = 1,
             stock_reserved = 1,
-            fail_reason = NULL
+            flow_state = 'RESERVED',
+            owner_token = NULL,
+            lease_until = NULL,
+            next_retry_at = #{nextRetryAt},
+            fail_reason = NULL,
+            last_error = NULL,
+            version = version + 1
         WHERE request_id = #{requestId}
+          AND flow_state = 'RESERVING'
+          AND owner_token = #{ownerToken}
           AND status = 0
+          AND stock_reserved = 0
+    </update>
+
+    <update id="markPublishing">
+        UPDATE order_request
+        SET flow_state = 'PUBLISHING',
+            next_retry_at = #{nextRetryAt},
+            version = version + 1
+        WHERE request_id = #{requestId}
+          AND flow_state IN ('RESERVED', 'PUBLISHING')
+          AND stock_reserved = 1
+          AND status = 1
     </update>
 
     <update id="markProcessing">
         UPDATE order_request
         SET status = 2,
-            fail_reason = NULL
+            flow_state = 'PROCESSING',
+            owner_token = NULL,
+            lease_until = NULL,
+            next_retry_at = NULL,
+            fail_reason = NULL,
+            version = version + 1
         WHERE request_id = #{requestId}
           AND status IN (1, 2)
+          AND flow_state IN ('RESERVED', 'PUBLISHING', 'PUBLISHED')
     </update>
 
     <update id="markPublished">
         UPDATE order_request
         SET published_at = #{publishedAt}
+            , flow_state = 'PUBLISHED'
+            , next_retry_at = NULL
+            , last_error = NULL
+            , version = version + 1
         WHERE request_id = #{requestId}
-          AND status IN (1, 2)
+          AND status = 1
+          AND flow_state IN ('RESERVED', 'PUBLISHING')
           AND published_at IS NULL
     </update>
 
@@ -79,37 +126,67 @@
         SET status = 3,
             order_id = #{orderId},
             order_no = #{orderNo},
-            fail_reason = NULL
+            flow_state = 'SUCCEEDED',
+            owner_token = NULL,
+            lease_until = NULL,
+            next_retry_at = NULL,
+            published_at = COALESCE(published_at, NOW()),
+            fail_reason = NULL,
+            last_error = NULL,
+            version = version + 1
         WHERE request_id = #{requestId}
           AND status IN (1, 2)
+          AND flow_state = 'PROCESSING'
     </update>
 
-    <update id="markFailed">
+    <update id="markReleasing">
         UPDATE order_request
-        SET status = 4,
-            fail_reason = LEFT(#{failReason}, 255)
+        SET status = 5,
+            flow_state = 'RELEASING',
+            fail_reason = LEFT(#{failReason}, 255),
+            last_error = LEFT(#{failReason}, 500),
+            next_retry_at = #{nextRetryAt},
+            owner_token = NULL,
+            lease_until = NULL,
+            version = version + 1
         WHERE request_id = #{requestId}
           AND status IN (0, 1, 2)
+          AND stock_released = 0
     </update>
 
-    <select id="findUnpublishedQueued"
-            resultType="com.ticket.module.order.entity.OrderRequest">
-        SELECT <include refid="columns"/>
-        FROM order_request
-        WHERE status = 1
-          AND stock_reserved = 1
-          AND published_at IS NULL
-          AND updated_at &lt; #{updatedBefore}
-        ORDER BY id
-        LIMIT #{limit}
-    </select>
+    <update id="markStockReleased">
+        UPDATE order_request
+        SET status = 4,
+            stock_released = 1,
+            flow_state = 'FAILED',
+            next_retry_at = NULL,
+            version = version + 1
+        WHERE request_id = #{requestId}
+          AND stock_released = 0
+          AND status IN (4, 5)
+    </update>
 
-    <select id="findStaleActive"
+    <update id="markManualReview">
+        UPDATE order_request
+        SET flow_state = 'MANUAL_REVIEW',
+            fail_reason = LEFT(#{failReason}, 255),
+            last_error = LEFT(#{failReason}, 500),
+            next_retry_at = NULL,
+            owner_token = NULL,
+            lease_until = NULL,
+            version = version + 1
+        WHERE request_id = #{requestId}
+          AND flow_state NOT IN ('SUCCEEDED', 'FAILED', 'MANUAL_REVIEW')
+    </update>
+
+    <select id="findRecoverablePage"
             resultType="com.ticket.module.order.entity.OrderRequest">
         SELECT <include refid="columns"/>
         FROM order_request
-        WHERE status IN (0, 2)
-          AND updated_at &lt; #{updatedBefore}
+        WHERE id &gt; #{lastId}
+          AND flow_state &lt;&gt; 'SUCCEEDED'
+          AND flow_state &lt;&gt; 'MANUAL_REVIEW'
+          AND NOT (flow_state = 'FAILED' AND stock_released = 1)
         ORDER BY id
         LIMIT #{limit}
     </select>
@@ -119,7 +196,10 @@
         FROM order_request
         WHERE travel_date = #{travelDate}
           AND train_id = #{trainId}
-          AND status IN (0, 1, 2)
+          AND (
+              status IN (0, 1, 2, 5)
+              OR (status = 4 AND stock_released = 0)
+          )
     </select>
 
 </mapper>

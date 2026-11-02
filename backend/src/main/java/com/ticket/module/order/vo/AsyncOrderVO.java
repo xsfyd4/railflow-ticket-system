@@ -10,6 +10,8 @@ public class AsyncOrderVO {
     private String requestId;
     private Integer status;
     private String statusText;
+    private String flowState;
+    private Integer stockReserved;
     private Long orderId;
     private String orderNo;
     private String failReason;
@@ -38,6 +40,22 @@ public class AsyncOrderVO {
 
     public void setStatusText(String statusText) {
         this.statusText = statusText;
+    }
+
+    public String getFlowState() {
+        return flowState;
+    }
+
+    public void setFlowState(String flowState) {
+        this.flowState = flowState;
+    }
+
+    public Integer getStockReserved() {
+        return stockReserved;
+    }
+
+    public void setStockReserved(Integer stockReserved) {
+        this.stockReserved = stockReserved;
     }
 
     public Long getOrderId() {

@@ -5,6 +5,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -30,6 +31,7 @@ class TicketStockCacheIntegrationTest {
     private JdbcTemplate jdbcTemplate;
 
     @Autowired
+    @Qualifier("writeRedisTemplate")
     private StringRedisTemplate redis;
 
     @BeforeEach
@@ -56,19 +58,33 @@ class TicketStockCacheIntegrationTest {
     @Test
     void shouldAtomicallyReserveAllSegmentsAndRejectWithoutPartialDeduction() {
         assertEquals(ReserveResult.RESERVED,
-                stockCache.tryReserve(TEST_DATE, TRAIN_ID, SEAT_TYPE,
+                stockCache.tryReserve("reserve-test-1",
+                        TEST_DATE, TRAIN_ID, SEAT_TYPE,
+                        1, 4, 3));
+        assertEquals(List.of("7", "7", "7", "7"), redisCounts());
+
+        assertEquals(ReserveResult.ALREADY_RESERVED,
+                stockCache.tryReserve("reserve-test-1",
+                        TEST_DATE, TRAIN_ID, SEAT_TYPE,
                         1, 4, 3));
         assertEquals(List.of("7", "7", "7", "7"), redisCounts());
 
         // 第二笔要 8 张：即使前三段还有 7 张，也必须一段都不扣。
         assertEquals(ReserveResult.NOT_ENOUGH,
-                stockCache.tryReserve(TEST_DATE, TRAIN_ID, SEAT_TYPE,
+                stockCache.tryReserve("reserve-test-2",
+                        TEST_DATE, TRAIN_ID, SEAT_TYPE,
                         1, 4, 8));
         assertEquals(List.of("7", "7", "7", "7"), redisCounts(),
                 "失败的多段预扣不能留下半扣状态");
 
-        stockCache.releaseReservation(
-                TEST_DATE, TRAIN_ID, SEAT_TYPE, 1, 4, 3);
+        assertEquals(TicketStockCache.ReleaseResult.RELEASED,
+                stockCache.releaseReservationNow(
+                        "reserve-test-1",
+                        TEST_DATE, TRAIN_ID, SEAT_TYPE, 1, 4));
+        assertEquals(TicketStockCache.ReleaseResult.ALREADY_RELEASED,
+                stockCache.releaseReservationNow(
+                        "reserve-test-1",
+                        TEST_DATE, TRAIN_ID, SEAT_TYPE, 1, 4));
         assertEquals(List.of("10", "10", "10", "10"), redisCounts());
     }
 
@@ -94,6 +110,11 @@ class TicketStockCacheIntegrationTest {
             keys.add(stockCache.key(
                     TEST_DATE, TRAIN_ID, SEAT_TYPE, segment));
         }
+        keys.add(stockCache.reservationKey(
+                TEST_DATE, TRAIN_ID, "reserve-test-1"));
+        keys.add(stockCache.reservationKey(
+                TEST_DATE, TRAIN_ID, "reserve-test-2"));
+        keys.add(stockCache.pendingReservationKey(TEST_DATE, TRAIN_ID));
         redis.delete(keys);
     }
 }
