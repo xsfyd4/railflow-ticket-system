@@ -7,10 +7,15 @@ import { toast } from '../ui'
 import StationPicker from '../components/StationPicker.vue'
 import {
   clearPendingOrderIdempotencyKey,
+  clearPendingAsyncOrder,
+  loadPendingAsyncOrder,
   pendingOrderIdempotencyKey,
+  savePendingAsyncOrder,
 } from '../orderStatus'
 
 const router = useRouter()
+const ASYNC_POLL_INTERVAL_MS = 400
+const ASYNC_POLL_TIMEOUT_MS = 30000
 const seatTypes = [
   { value: 1, label: '商务座', className: 'business' },
   { value: 2, label: '一等座', className: 'first' },
@@ -39,6 +44,7 @@ const searching = ref(false)
 const searched = ref(false)
 const result = reactive({ records: [], total: 0, page: 1, size: 10 })
 const error = ref('')
+const asyncNotice = ref('')
 
 const booking = reactive({
   open: false,
@@ -49,6 +55,9 @@ const booking = reactive({
   loadingPassengers: false,
   submitting: false,
   idempotencyKey: '',
+  asyncRequestId: '',
+  asyncPayload: null,
+  asyncStatusText: '',
   error: '',
 })
 
@@ -57,8 +66,106 @@ const selectedPassengers = computed(() =>
 )
 
 onMounted(() => {
-  if (auth.token) search()
+  if (auth.token) {
+    search()
+    resumePendingAsyncOrder()
+  }
 })
+
+function sleep(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds))
+}
+
+function updateAsyncStatus(data) {
+  if (data?.requestId) booking.asyncRequestId = data.requestId
+  if (data?.statusText) booking.asyncStatusText = data.statusText
+}
+
+async function pollAsyncOrder(requestId) {
+  const deadline = Date.now() + ASYNC_POLL_TIMEOUT_MS
+  let latest = null
+  while (Date.now() < deadline) {
+    latest = await userApi.asyncOrderStatus(requestId)
+    updateAsyncStatus(latest)
+    if (latest.status === 3 || latest.status === 4) return latest
+    await sleep(ASYNC_POLL_INTERVAL_MS)
+  }
+  return latest
+}
+
+async function handleAsyncResult(latest, payload, { resumed = false } = {}) {
+  if (latest?.status === 3 && latest.orderNo) {
+    clearPendingOrderIdempotencyKey(payload)
+    clearPendingAsyncOrder(latest.requestId)
+    booking.asyncRequestId = ''
+    booking.asyncPayload = null
+    booking.asyncStatusText = ''
+    asyncNotice.value = ''
+    if (!resumed) booking.open = false
+    toast(`订单 ${latest.orderNo.slice(-8)} 创建成功`)
+    await router.push(`/orders/${latest.orderNo}`)
+    return true
+  }
+  if (latest?.status === 4) {
+    const reason = latest.failReason || latest.statusText || '订单创建失败'
+    clearPendingOrderIdempotencyKey(payload)
+    clearPendingAsyncOrder(latest.requestId)
+    booking.asyncRequestId = ''
+    booking.asyncPayload = null
+    booking.asyncStatusText = ''
+    booking.idempotencyKey = ''
+    asyncNotice.value = ''
+    if (resumed) {
+      toast(reason, 'error')
+    } else {
+      booking.error = reason
+    }
+    return true
+  }
+  return false
+}
+
+async function continueAsyncOrder() {
+  if (!booking.asyncRequestId || !booking.asyncPayload) return
+  booking.error = ''
+  booking.submitting = true
+  try {
+    const latest = await pollAsyncOrder(booking.asyncRequestId)
+    if (await handleAsyncResult(latest, booking.asyncPayload)) return
+    booking.error =
+      '订单仍在排队处理中，已保存请求状态，可刷新页面继续查询。'
+  } catch (e) {
+    if (e.code === 401) {
+      router.push({ name: 'login', query: { redirect: '/' } })
+      return
+    }
+    booking.error = e.message
+  } finally {
+    booking.submitting = false
+  }
+}
+
+async function resumePendingAsyncOrder() {
+  const pending = loadPendingAsyncOrder()
+  if (!pending) return
+  asyncNotice.value = '检测到正在创建的订单，正在恢复处理状态…'
+  try {
+    const latest = await pollAsyncOrder(pending.requestId)
+    if (await handleAsyncResult(
+      latest,
+      pending.payload,
+      { resumed: true },
+    )) return
+    asyncNotice.value =
+      '订单仍在排队处理中；继续停留或稍后刷新页面即可恢复查询。'
+  } catch (e) {
+    if (e.code === 401) {
+      router.push({ name: 'login', query: { redirect: '/' } })
+      return
+    }
+    asyncNotice.value = `订单状态恢复失败：${e.message}`
+  }
+}
 
 async function search(page = 1) {
   error.value = ''
@@ -141,6 +248,9 @@ function openBooking(ticket, seat) {
   booking.selectedIds = []
   booking.error = ''
   booking.idempotencyKey = ''
+  booking.asyncRequestId = ''
+  booking.asyncPayload = null
+  booking.asyncStatusText = ''
   loadPassengers()
 }
 
@@ -167,13 +277,20 @@ function closeBooking() {
 
 async function submitOrder() {
   booking.error = ''
+  asyncNotice.value = ''
   if (!booking.selectedIds.length) {
     booking.error = '请至少选择一位乘车人'
     return
   }
+  if (booking.asyncRequestId) {
+    await continueAsyncOrder()
+    return
+  }
   booking.submitting = true
+  let orderPayload = null
+  let requestId = ''
   try {
-    const orderPayload = {
+    orderPayload = {
       trainId: booking.ticket.trainId,
       travelDate: travelDate.value,
       fromStationId: fromStation.value.id,
@@ -181,18 +298,38 @@ async function submitOrder() {
       seatType: booking.seat.seatType,
       passengerIds: [...booking.selectedIds],
     }
-    booking.idempotencyKey =
-      pendingOrderIdempotencyKey(orderPayload)
-    const data = await userApi.createOrder(
+    booking.idempotencyKey = pendingOrderIdempotencyKey(orderPayload)
+    requestId = booking.idempotencyKey
+    booking.asyncPayload = orderPayload
+    savePendingAsyncOrder(requestId, orderPayload)
+    const submitted = await userApi.submitAsyncOrder(
       orderPayload,
-      booking.idempotencyKey,
+      requestId,
     )
-    clearPendingOrderIdempotencyKey(orderPayload)
-    booking.open = false
-    toast(`订单 ${data.orderNo.slice(-8)} 创建成功`)
-    router.push(`/orders/${data.orderNo}`)
+    updateAsyncStatus(submitted)
+    const latest = await pollAsyncOrder(requestId)
+    if (await handleAsyncResult(latest, orderPayload)) return
+    booking.error =
+      '订单仍在排队处理中，已保存请求状态，可点击按钮继续查询。'
   } catch (e) {
-    booking.error = e.message
+    if (e.code === 401) {
+      router.push({ name: 'login', query: { redirect: '/' } })
+      return
+    }
+    if (requestId) {
+      try {
+        const latest = await userApi.asyncOrderStatus(requestId)
+        updateAsyncStatus(latest)
+        if (await handleAsyncResult(latest, orderPayload)) return
+        booking.error =
+          '下单请求已提交，但状态同步暂时失败，可点击按钮继续查询。'
+      } catch {
+        booking.error =
+          '网络状态不确定，请求已保存在当前会话，可刷新页面继续恢复。'
+      }
+    } else {
+      booking.error = e.message
+    }
   } finally {
     booking.submitting = false
   }
@@ -266,6 +403,7 @@ function passengerTypeLabel(type) {
     </section>
 
     <p v-if="error" class="page-alert">{{ error }}</p>
+    <p v-if="asyncNotice" class="page-alert">{{ asyncNotice }}</p>
 
     <section v-if="searched" class="results-section">
       <div class="results-head">
@@ -430,10 +568,23 @@ function passengerTypeLabel(type) {
           </div>
 
           <p v-if="booking.error" class="form-error">{{ booking.error }}</p>
+          <p
+            v-if="booking.submitting || booking.asyncRequestId"
+            class="queue-status"
+          >
+            <i></i>
+            <span>{{ booking.asyncStatusText || '订单已进入处理队列…' }}</span>
+          </p>
           <div class="modal-actions">
             <button class="button ghost" type="button" @click="closeBooking">取消</button>
             <button class="button primary" :disabled="booking.submitting" @click="submitOrder">
-              {{ booking.submitting ? '正在创建订单…' : '创建待支付订单' }}
+              {{
+                booking.submitting
+                  ? (booking.asyncStatusText || '订单排队中…')
+                  : booking.asyncRequestId
+                    ? '继续查询订单状态'
+                    : '创建待支付订单'
+              }}
             </button>
           </div>
         </div>

@@ -1,5 +1,29 @@
 # Redis 操作日志
 
+## 2026-11-16：精简状态机压测后的 reservation 核对
+
+**检查范围**
+
+```text
+ticket:reservation:pending:{日期:车次}
+ticket:reservation:{日期:车次}:{requestId}
+ticket:stock:{日期:车次}:{席别}:{段序号}
+```
+
+**结果**
+
+- 400 笔压测订单全部经过 Redis 预扣和 MQ 消费，最终均成功创建并取消。
+- `ticket:reservation:pending:*` 残留数量为 0。
+- MySQL 库存没有负数行，也没有 `remaining_count + sold_count <> total_count`。
+- 正常下单路径仍为 `RESERVED → SOLD`；失败或取消库存补偿路径仍为
+  `RESERVED → RELEASED`，两段 Lua 都保持幂等。
+
+**说明**
+
+- 成功的 reservation 在车次出行日期后按 TTL 清理，保留记录用于审计和防止重复预扣。
+- Redis 预扣记录短暂处于 RESERVED 时，查询链路只使用弱一致库存缓存，
+  不把 reservation 当作订单事实来源；MySQL 订单和 `order_request` 才是最终事实。
+
 ## 2026-11-02：预约标记与失败补偿
 
 **Key**

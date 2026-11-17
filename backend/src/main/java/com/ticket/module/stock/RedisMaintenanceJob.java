@@ -48,6 +48,7 @@ public class RedisMaintenanceJob {
     }
 
     @Scheduled(
+            scheduler = "maintenanceTaskScheduler",
             initialDelayString =
                     "${ticket.redis.warmup.initial-delay-ms:20000}",
             fixedDelayString =
@@ -65,6 +66,7 @@ public class RedisMaintenanceJob {
     }
 
     @Scheduled(
+            scheduler = "maintenanceTaskScheduler",
             initialDelayString =
                     "${ticket.redis.reconcile.initial-delay-ms:60000}",
             fixedDelayString =

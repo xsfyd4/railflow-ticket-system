@@ -71,9 +71,11 @@ public class OrderRequestTxService {
             throw new BizException(400,
                     "异步下单请求状态不允许消费：" + request.getStatus());
         }
-
-        if (!flowService.markProcessing(requestId, request.getFlowState())) {
-            throw new BizException(ResultCode.ORDER_STATUS_ERROR);
+        if (!"RESERVED".equals(request.getFlowState())
+                && !"PUBLISHED".equals(request.getFlowState())) {
+            throw new BizException(400,
+                    "异步下单流程状态不允许消费："
+                            + request.getFlowState());
         }
 
         CreateOrderDTO dto;
@@ -87,7 +89,10 @@ public class OrderRequestTxService {
         CreateOrderVO order =
                 orderService.createForUser(request.getUserId(), dto);
         if (!flowService.markSuccess(
-                requestId, order.getOrderId(), order.getOrderNo())) {
+                requestId,
+                request.getFlowState(),
+                order.getOrderId(),
+                order.getOrderNo())) {
             /*
              * 抛出后同一事务会撤销库存和订单，由消费者补偿 Redis。
              * 正常不会发生，保留是为了防止状态表被人工改坏。

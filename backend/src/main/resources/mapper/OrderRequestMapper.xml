@@ -20,12 +20,14 @@
             (request_id, user_id, payload_json,
              train_id, travel_date, seat_type,
              from_segment_index, to_segment_index, passenger_count,
-             status, stock_reserved, stock_released, flow_state)
+             status, stock_reserved, stock_released, flow_state,
+             owner_token, lease_until, next_retry_at)
         VALUES
             (#{requestId}, #{userId}, #{payloadJson},
              #{trainId}, #{travelDate}, #{seatType},
              #{fromSegmentIndex}, #{toSegmentIndex}, #{passengerCount},
-             #{status}, #{stockReserved}, #{stockReleased}, #{flowState})
+             #{status}, #{stockReserved}, #{stockReleased}, #{flowState},
+             #{ownerToken}, #{leaseUntil}, #{nextRetryAt})
     </insert>
 
     <select id="findByRequestId"
@@ -51,20 +53,6 @@
         FOR UPDATE
     </select>
 
-    <update id="markReserving">
-        UPDATE order_request
-        SET flow_state = 'RESERVING',
-            owner_token = #{ownerToken},
-            lease_until = #{leaseUntil},
-            next_retry_at = #{nextRetryAt},
-            last_error = NULL,
-            version = version + 1
-        WHERE request_id = #{requestId}
-          AND flow_state = 'CREATED'
-          AND status = 0
-          AND stock_reserved = 0
-    </update>
-
     <update id="markReserved">
         UPDATE order_request
         SET status = 1,
@@ -77,35 +65,10 @@
             last_error = NULL,
             version = version + 1
         WHERE request_id = #{requestId}
-          AND flow_state = 'RESERVING'
+          AND flow_state = 'CREATED'
           AND owner_token = #{ownerToken}
           AND status = 0
           AND stock_reserved = 0
-    </update>
-
-    <update id="markPublishing">
-        UPDATE order_request
-        SET flow_state = 'PUBLISHING',
-            next_retry_at = #{nextRetryAt},
-            version = version + 1
-        WHERE request_id = #{requestId}
-          AND flow_state IN ('RESERVED', 'PUBLISHING')
-          AND stock_reserved = 1
-          AND status = 1
-    </update>
-
-    <update id="markProcessing">
-        UPDATE order_request
-        SET status = 2,
-            flow_state = 'PROCESSING',
-            owner_token = NULL,
-            lease_until = NULL,
-            next_retry_at = NULL,
-            fail_reason = NULL,
-            version = version + 1
-        WHERE request_id = #{requestId}
-          AND status IN (1, 2)
-          AND flow_state IN ('RESERVED', 'PUBLISHING', 'PUBLISHED')
     </update>
 
     <update id="markPublished">
@@ -117,7 +80,7 @@
             , version = version + 1
         WHERE request_id = #{requestId}
           AND status = 1
-          AND flow_state IN ('RESERVED', 'PUBLISHING')
+          AND flow_state = 'RESERVED'
           AND published_at IS NULL
     </update>
 
@@ -136,7 +99,17 @@
             version = version + 1
         WHERE request_id = #{requestId}
           AND status IN (1, 2)
-          AND flow_state = 'PROCESSING'
+          AND flow_state = #{fromState}
+    </update>
+
+    <update id="deferPublishing">
+        UPDATE order_request
+        SET next_retry_at = #{nextRetryAt},
+            last_error = LEFT(#{lastError}, 500),
+            version = version + 1
+        WHERE request_id = #{requestId}
+          AND status = 1
+          AND flow_state = 'RESERVED'
     </update>
 
     <update id="markReleasing">

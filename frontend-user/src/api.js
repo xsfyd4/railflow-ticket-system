@@ -51,6 +51,12 @@ export const userApi = {
     http.post('/user/orders', data, {
       headers: { 'Idempotency-Key': idempotencyKey },
     }),
+  submitAsyncOrder: (data, idempotencyKey) =>
+    http.post('/user/orders/async', data, {
+      headers: { 'Idempotency-Key': idempotencyKey },
+    }),
+  asyncOrderStatus: (requestId) =>
+    http.get(`/user/orders/async/${requestId}`),
   orders: (params) => http.get('/user/orders', { params }),
   orderDetail: (orderNo) => http.get(`/user/orders/${orderNo}`),
   payOrder: (orderNo, idempotencyKey) =>

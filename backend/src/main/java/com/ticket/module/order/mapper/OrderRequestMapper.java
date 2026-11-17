@@ -22,27 +22,21 @@ public interface OrderRequestMapper {
     OrderRequest findByRequestIdForUpdate(
             @Param("requestId") String requestId);
 
-    int markReserving(@Param("requestId") String requestId,
-                      @Param("ownerToken") String ownerToken,
-                      @Param("leaseUntil") LocalDateTime leaseUntil,
-                      @Param("nextRetryAt") LocalDateTime nextRetryAt);
-
     int markReserved(@Param("requestId") String requestId,
                      @Param("ownerToken") String ownerToken,
                      @Param("nextRetryAt") LocalDateTime nextRetryAt);
-
-    int markPublishing(@Param("requestId") String requestId,
-                       @Param("nextRetryAt") LocalDateTime nextRetryAt);
-
-    /** 申请状态 1/2 -> 2；真正的重复消费保护由行锁和最终 status=3 完成。 */
-    int markProcessing(@Param("requestId") String requestId);
 
     int markPublished(@Param("requestId") String requestId,
                       @Param("publishedAt") LocalDateTime publishedAt);
 
     int markSuccess(@Param("requestId") String requestId,
+                    @Param("fromState") String fromState,
                     @Param("orderId") Long orderId,
                     @Param("orderNo") String orderNo);
+
+    int deferPublishing(@Param("requestId") String requestId,
+                        @Param("lastError") String lastError,
+                        @Param("nextRetryAt") LocalDateTime nextRetryAt);
 
     int markReleasing(@Param("requestId") String requestId,
                       @Param("failReason") String failReason,

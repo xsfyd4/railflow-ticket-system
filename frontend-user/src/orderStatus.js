@@ -35,8 +35,10 @@ export function newIdempotencyKey() {
 }
 
 const ORDER_PREFIX = 'ticket:pending:order:'
+const ASYNC_ORDER_PREFIX = 'ticket:pending:async-order:'
 const PAY_PREFIX = 'ticket:pending:pay:'
 const KEY_TTL_MS = 24 * 60 * 60 * 1000
+const ASYNC_TTL_MS = 15 * 60 * 1000
 
 function orderFingerprint(payload) {
   return JSON.stringify({
@@ -76,6 +78,52 @@ export function clearPendingOrderIdempotencyKey(payload) {
   sessionStorage.removeItem(
     `${ORDER_PREFIX}${userScope()}:${orderFingerprint(payload)}`,
   )
+}
+
+export function savePendingAsyncOrder(requestId, payload) {
+  sessionStorage.setItem(
+    `${ASYNC_ORDER_PREFIX}${userScope()}`,
+    JSON.stringify({
+      requestId,
+      payload,
+      createdAt: Date.now(),
+    }),
+  )
+}
+
+export function loadPendingAsyncOrder() {
+  try {
+    const saved = JSON.parse(
+      sessionStorage.getItem(`${ASYNC_ORDER_PREFIX}${userScope()}`),
+    )
+    if (
+      saved?.requestId
+      && saved?.payload
+      && Date.now() - saved.createdAt < ASYNC_TTL_MS
+    ) {
+      return saved
+    }
+  } catch {
+    // 损坏或过期的恢复信息直接清理。
+  }
+  clearPendingAsyncOrder()
+  return null
+}
+
+export function clearPendingAsyncOrder(requestId) {
+  const storageKey = `${ASYNC_ORDER_PREFIX}${userScope()}`
+  if (!requestId) {
+    sessionStorage.removeItem(storageKey)
+    return
+  }
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(storageKey))
+    if (!saved || saved.requestId === requestId) {
+      sessionStorage.removeItem(storageKey)
+    }
+  } catch {
+    sessionStorage.removeItem(storageKey)
+  }
 }
 
 export function paymentIdempotencyKey(orderNo) {

@@ -1,7 +1,5 @@
 package com.ticket.module.order.impl;
 
-import com.ticket.common.exception.BizException;
-import com.ticket.common.result.ResultCode;
 import com.ticket.module.order.OrderFlowState;
 import com.ticket.module.order.entity.OrderRequest;
 import com.ticket.module.order.mapper.OrderFlowEventMapper;
@@ -32,25 +30,16 @@ public class OrderRequestFlowService {
     }
 
     @Transactional(rollbackFor = Exception.class)
-    public void create(OrderRequest request) {
+    public String create(OrderRequest request) {
+        String ownerToken = UUID.randomUUID().toString();
+        LocalDateTime now = LocalDateTime.now();
+        request.setOwnerToken(ownerToken);
+        request.setLeaseUntil(now.plusSeconds(30));
+        request.setNextRetryAt(now.plusSeconds(30));
         requestMapper.insert(request);
         eventMapper.append(
                 request.getRequestId(), null,
                 OrderFlowState.CREATED.name(), null, "request-created");
-    }
-
-    @Transactional(rollbackFor = Exception.class)
-    public String markReserving(String requestId) {
-        String ownerToken = UUID.randomUUID().toString();
-        LocalDateTime now = LocalDateTime.now();
-        int affected = requestMapper.markReserving(
-                requestId, ownerToken,
-                now.plusSeconds(30), now.plusSeconds(30));
-        if (affected != 1) {
-            throw new BizException(ResultCode.ASYNC_REQUEST_CONFLICT);
-        }
-        append(requestId, OrderFlowState.CREATED,
-                OrderFlowState.RESERVING, ownerToken, "redis-reserve-start");
         return ownerToken;
     }
 
@@ -64,20 +53,8 @@ public class OrderRequestFlowService {
         if (affected != 1) {
             return false;
         }
-        append(requestId, OrderFlowState.RESERVING,
+        append(requestId, OrderFlowState.CREATED,
                 OrderFlowState.RESERVED, ownerToken, "redis-reserve-success");
-        return true;
-    }
-
-    @Transactional(rollbackFor = Exception.class)
-    public boolean markPublishing(String requestId, Duration retryDelay) {
-        int affected = requestMapper.markPublishing(
-                requestId, LocalDateTime.now().plus(retryDelay));
-        if (affected != 1) {
-            return false;
-        }
-        append(requestId, OrderFlowState.RESERVED,
-                OrderFlowState.PUBLISHING, null, "mq-publish-start");
         return true;
     }
 
@@ -88,32 +65,37 @@ public class OrderRequestFlowService {
         if (affected != 1) {
             return false;
         }
-        append(requestId, OrderFlowState.PUBLISHING,
+        append(requestId, OrderFlowState.RESERVED,
                 OrderFlowState.PUBLISHED, null, "mq-publish-confirmed");
         return true;
     }
 
     @Transactional(rollbackFor = Exception.class)
-    public boolean markProcessing(String requestId, String fromState) {
-        int affected = requestMapper.markProcessing(requestId);
+    public boolean deferPublishing(String requestId,
+                                   String error,
+                                   Duration retryDelay) {
+        int affected = requestMapper.deferPublishing(
+                requestId, error,
+                LocalDateTime.now().plus(retryDelay));
         if (affected != 1) {
             return false;
         }
-        append(requestId, parse(fromState),
-                OrderFlowState.PROCESSING, null, "consumer-start");
+        append(requestId, OrderFlowState.RESERVED,
+                OrderFlowState.RESERVED, null, "mq-publish-retry");
         return true;
     }
 
     @Transactional(rollbackFor = Exception.class)
     public boolean markSuccess(String requestId,
+                               String fromState,
                                Long orderId,
                                String orderNo) {
         int affected = requestMapper.markSuccess(
-                requestId, orderId, orderNo);
+                requestId, fromState, orderId, orderNo);
         if (affected != 1) {
             return false;
         }
-        append(requestId, OrderFlowState.PROCESSING,
+        append(requestId, parse(fromState),
                 OrderFlowState.SUCCEEDED, null, orderNo);
         return true;
     }

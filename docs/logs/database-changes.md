@@ -1,5 +1,15 @@
 # 数据库操作日志
 
+## 2026-11-16：精简异步订单流程状态
+
+- 新增迁移 `sql/09-simplify-order-flow-states.sql`。
+- `RESERVING` 迁移为 `CREATED`，保留 owner token 和租约。
+- `PUBLISHING` 根据 `published_at` 迁移为 `RESERVED` 或 `PUBLISHED`。
+- `PROCESSING` 根据最终状态迁移为 `RESERVED`、`PUBLISHED`、`SUCCEEDED`、
+  `RELEASING` 或 `FAILED`。
+- 不删除请求、订单或历史流程事件。
+- 本地迁移前后全部现有请求均为 `SUCCEEDED`，没有待转换的活跃旧状态。
+
 ## 2026-11-02：异步下单状态机与扫描游标
 
 **迁移**

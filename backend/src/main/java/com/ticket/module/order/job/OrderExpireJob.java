@@ -29,6 +29,7 @@ public class OrderExpireJob {
     }
 
     @Scheduled(
+            scheduler = "orderTaskScheduler",
             fixedDelayString = "${ticket.order.expire-scan-ms:60000}",
             initialDelayString = "${ticket.order.expire-initial-delay-ms:30000}"
     )

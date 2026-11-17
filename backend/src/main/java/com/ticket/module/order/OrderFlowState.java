@@ -8,11 +8,8 @@ package com.ticket.module.order;
  */
 public enum OrderFlowState {
     CREATED,
-    RESERVING,
     RESERVED,
-    PUBLISHING,
     PUBLISHED,
-    PROCESSING,
     RELEASING,
     SUCCEEDED,
     FAILED,

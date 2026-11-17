@@ -143,7 +143,7 @@ class OrderAsyncIntegrationTest {
         assertTrue(count("""
                 SELECT COUNT(*) FROM order_flow_event
                 WHERE request_id = ?
-                """, requestId) >= 6);
+                """, requestId) >= 3);
         assertEquals("SOLD", redis.opsForHash().get(
                 stockCache.reservationKey(
                         TEST_DATE, TRAIN_ID, requestId),

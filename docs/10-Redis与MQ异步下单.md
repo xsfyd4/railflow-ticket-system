@@ -181,17 +181,17 @@ WHERE request_id = '替换成真实值';
 
 ## 8. 异步流程状态机与双游标恢复
 
-2026-11-02 新增持久化流程状态：
+2026-11-02 新增持久化流程状态，2026-11-16 精简为：
 
 ```text
 CREATED
-→ RESERVING
 → RESERVED
-→ PUBLISHING
 → PUBLISHED
-→ PROCESSING
 → SUCCEEDED
 ```
+
+`RESERVING`、`PUBLISHING`、`PROCESSING` 属于瞬时阶段，不再各占一次数据库
+事务和持久化状态；恢复任务只依赖 CREATED、RESERVED、PUBLISHED 和失败补偿状态。
 
 失败分支：
 

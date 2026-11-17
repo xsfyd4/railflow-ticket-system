@@ -114,8 +114,9 @@ public class OrderAsyncServiceImpl {
         }
 
         OrderRequest request = buildRequest(requestId, userId, dto, plan);
+        String ownerToken;
         try {
-            flowService.create(request);
+            ownerToken = flowService.create(request);
         } catch (DuplicateKeyException duplicate) {
             // 两个相同幂等键并发提交时，只有一个能 INSERT 成功。
             OrderRequest winner = requestMapper.findByRequestId(requestId);
@@ -130,7 +131,6 @@ public class OrderAsyncServiceImpl {
             return replayExisting(winner, userId, dto);
         }
 
-        String ownerToken = flowService.markReserving(requestId);
         TicketStockCache.ReserveResult reserveResult =
                 stockCache.tryReserve(
                         requestId,
@@ -159,7 +159,7 @@ public class OrderAsyncServiceImpl {
         }
 
         if (!flowService.markReserved(
-                requestId, ownerToken, Duration.ofSeconds(30))) {
+                requestId, ownerToken, Duration.ofSeconds(10))) {
             idempotencyStore.markFailed(
                     "ORDER", requestId, gate.ownerToken(),
                     "异步请求状态已经变化");
@@ -167,10 +167,6 @@ public class OrderAsyncServiceImpl {
         }
 
         try {
-            if (!flowService.markPublishing(
-                    requestId, Duration.ofSeconds(10))) {
-                throw new BizException(ResultCode.ASYNC_REQUEST_CONFLICT);
-            }
             publisher.publish(requestId);
             if (!flowService.markPublished(requestId)) {
                 log.warn("MQ 已确认，但流程状态未能标记为 PUBLISHED，requestId={}",
@@ -179,8 +175,6 @@ public class OrderAsyncServiceImpl {
             idempotencyStore.markSuccess(
                     "ORDER", requestId, gate.ownerToken(), requestId);
         } catch (RuntimeException e) {
-            boolean markedFailed = failureService.fail(
-                    requestId, e.getMessage());
             OrderRequest latest =
                     requestMapper.findByRequestId(requestId);
             if (latest != null && latest.getStatus() != null
@@ -193,17 +187,13 @@ public class OrderAsyncServiceImpl {
                         "ORDER", requestId, gate.ownerToken(), requestId);
                 return toVO(latest);
             }
-            if (!markedFailed) {
-                log.warn("MQ 发布结果不确定，请求已交由恢复任务处理，requestId={}",
-                        requestId);
-            }
-            idempotencyStore.markFailed(
-                    "ORDER", requestId, gate.ownerToken(),
-                    e.getMessage());
-            if (e instanceof BizException bizException) {
-                throw bizException;
-            }
-            throw new BizException(ResultCode.ASYNC_MQ_UNAVAILABLE);
+            flowService.deferPublishing(
+                    requestId, e.getMessage(), Duration.ofSeconds(5));
+            idempotencyStore.markSuccess(
+                    "ORDER", requestId, gate.ownerToken(), requestId);
+            log.warn("MQ 发布结果不确定，请求保持 RESERVED 并等待恢复任务，requestId={}",
+                    requestId);
+            return toVO(requestMapper.findByRequestId(requestId));
         }
 
         return toVO(requestMapper.findByRequestIdAndUserId(

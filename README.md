@@ -228,6 +228,7 @@ TICKET_REDIS_RECONCILE_ENABLED=true
 mysql -u root -p train_ticket < sql/05-order-request.sql
 mysql -u root -p train_ticket < sql/06-order-request-reservation.sql
 mysql -u root -p train_ticket < sql/08-order-flow-reliability.sql
+mysql -u root -p train_ticket < sql/09-simplify-order-flow-states.sql
 ```
 
 异步下单接口：
@@ -246,9 +247,12 @@ GET /api/user/orders/async/{requestId}
 Authorization: Bearer <token>
 ```
 
+用户端“创建待支付订单”默认调用异步接口，轮询成功后进入订单详情；
+同步接口 `POST /api/user/orders` 继续保留，用于对照和受控降级。
+
 原有同步接口 `POST /api/user/orders` 继续保留，便于对照学习。
 
-异步链路会持久化 `CREATED → RESERVING → RESERVED → PUBLISHING → PUBLISHED → PROCESSING → SUCCEEDED`
+异步链路会持久化 `CREATED → RESERVED → PUBLISHED → SUCCEEDED`
 流程状态，并使用 RabbitMQ Publisher Confirm 确认消息已落 Broker。恢复任务同时使用
 `order_flow_event` 增量游标和 `order_request` 全量审计游标。
 

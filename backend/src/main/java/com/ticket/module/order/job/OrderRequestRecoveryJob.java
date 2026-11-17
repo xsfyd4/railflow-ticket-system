@@ -75,6 +75,7 @@ public class OrderRequestRecoveryJob {
     }
 
     @Scheduled(
+            scheduler = "orderTaskScheduler",
             fixedDelayString = "${ticket.order.async.recovery-scan-ms:30000}",
             initialDelayString =
                     "${ticket.order.async.recovery-initial-delay-ms:30000}"
@@ -100,6 +101,7 @@ public class OrderRequestRecoveryJob {
     }
 
     @Scheduled(
+            scheduler = "orderTaskScheduler",
             fixedDelayString =
                     "${ticket.order.async.full-scan-ms:600000}",
             initialDelayString =
@@ -155,9 +157,7 @@ public class OrderRequestRecoveryJob {
             return;
         }
         switch (state) {
-            case CREATED -> failureService.fail(
-                requestId, "异步下单请求长时间未开始预扣");
-            case RESERVING -> {
+            case CREATED -> {
                 if (stockCache.reservationExists(
                         requestId,
                         request.getTravelDate(),
@@ -165,7 +165,7 @@ public class OrderRequestRecoveryJob {
                     if (flowService.markReserved(
                             requestId,
                             request.getOwnerToken(),
-                            Duration.ofSeconds(30))) {
+                            Duration.ofSeconds(10))) {
                         OrderRequest updated =
                                 requestMapper.findByRequestId(requestId);
                         publishReserved(updated);
@@ -176,11 +176,9 @@ public class OrderRequestRecoveryJob {
                             "Redis 预扣结果不存在，已按 MySQL 对账");
                 }
             }
-            case RESERVED, PUBLISHING -> publishReserved(request);
+            case RESERVED -> publishReserved(request);
             case PUBLISHED -> republishIfStale(request);
-            case PROCESSING -> failureService.fail(
-                    requestId, "异步下单消费者处理超时");
-            case FAILED, SUCCEEDED, MANUAL_REVIEW -> {
+            case RELEASING, FAILED, SUCCEEDED, MANUAL_REVIEW -> {
                 // 终态不重复处理。
             }
         }
@@ -191,20 +189,25 @@ public class OrderRequestRecoveryJob {
                 || request.getStatus() == 4) {
             return;
         }
-        if (!flowService.markPublishing(
-                request.getRequestId(), Duration.ofSeconds(10))) {
-            OrderRequest latest =
-                    requestMapper.findByRequestId(request.getRequestId());
-            if (latest != null && latest.getPublishedAt() == null
-                    && latest.getStatus() != null
-                    && latest.getStatus() != 4) {
-                throw new IllegalStateException(
-                        "流程状态无法进入 PUBLISHING");
-            }
+        try {
+            publisher.publish(request.getRequestId());
+        } catch (Exception e) {
+            flowService.deferPublishing(
+                    request.getRequestId(),
+                    e.getMessage(),
+                    Duration.ofSeconds(5));
+            log.warn("恢复任务投递仍失败，requestId={}",
+                    request.getRequestId());
             return;
         }
-        publisher.publish(request.getRequestId());
         if (!flowService.markPublished(request.getRequestId())) {
+            OrderRequest latest =
+                    requestMapper.findByRequestId(request.getRequestId());
+            if (latest != null && latest.getStatus() != null
+                    && (latest.getStatus() == 3
+                    || latest.getStatus() == 4)) {
+                return;
+            }
             throw new IllegalStateException(
                     "RabbitMQ 已确认，但流程状态无法标记为 PUBLISHED");
         }
@@ -247,9 +250,7 @@ public class OrderRequestRecoveryJob {
 
     private boolean isDue(OrderRequest request, OrderFlowState state) {
         LocalDateTime now = LocalDateTime.now();
-        if (state == OrderFlowState.RESERVING
-                || state == OrderFlowState.RESERVED
-                || state == OrderFlowState.PUBLISHING) {
+        if (state == OrderFlowState.RESERVED) {
             return request.getNextRetryAt() == null
                     || !request.getNextRetryAt().isAfter(now);
         }

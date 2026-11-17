@@ -154,6 +154,7 @@ public class TrainRouteIndex {
     }
 
     @Scheduled(
+            scheduler = "maintenanceTaskScheduler",
             initialDelayString = "${ticket.route-index.retry-delay-ms:30000}",
             fixedDelayString = "${ticket.route-index.retry-delay-ms:30000}")
     public void retryIfUnavailable() {
