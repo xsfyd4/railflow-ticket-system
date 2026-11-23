@@ -196,6 +196,7 @@ CREATE TABLE `ticket_stock` (
   `total_count`     INT      NOT NULL                COMMENT '本段该席别总票数（定员）',
   `sold_count`      INT      NOT NULL DEFAULT 0      COMMENT '已售出数量',
   `remaining_count` INT      NOT NULL                COMMENT '剩余票数 = total_count - sold_count',
+  `sold_seat_mask`  VARBINARY(160) NULL              COMMENT '已售具体座位位图，座位号从1开始按位存储',
   `version`         INT      NOT NULL DEFAULT 0      COMMENT '版本号（乐观锁/排查问题用）',
   `updated_at`      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
                                      ON UPDATE CURRENT_TIMESTAMP COMMENT '最后变动时间',
@@ -261,7 +262,8 @@ CREATE TABLE `ticket_order_item` (
   `seat_type`      TINYINT       NOT NULL                COMMENT '席别',
   `price`          DECIMAL(10,2) NOT NULL                COMMENT '这张票的价格',
   `coach_no`       VARCHAR(10)            DEFAULT NULL   COMMENT '车厢号（前期可不选座，留空）',
-  `seat_no`        VARCHAR(10)            DEFAULT NULL   COMMENT '座位号（前期可不选座，留空）',
+    `seat_no`        VARCHAR(10)            DEFAULT NULL   COMMENT '座位号',
+    `seat_index`     INT                    DEFAULT NULL   COMMENT '席别内连续座位位号，从1开始',
   `status`         TINYINT       NOT NULL DEFAULT 0      COMMENT '0=有效待出票，1=已出票，2=已退票',
   `refunded_at`    DATETIME               DEFAULT NULL   COMMENT '该张票的退票时间',
   `created_at`     DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,

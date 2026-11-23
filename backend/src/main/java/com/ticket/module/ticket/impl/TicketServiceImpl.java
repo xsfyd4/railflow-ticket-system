@@ -1,6 +1,9 @@
 package com.ticket.module.ticket.impl;
 
 import com.ticket.common.result.PageResult;
+import com.ticket.module.stock.entity.TicketStock;
+import com.ticket.module.stock.seat.SeatAvailability;
+import com.ticket.module.stock.seat.SeatAvailabilityService;
 import com.ticket.module.ticket.TicketService;
 import com.ticket.module.ticket.TrainRouteIndex;
 import com.ticket.module.ticket.TicketSearchCache;
@@ -18,8 +21,10 @@ import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.math.BigDecimal;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.Supplier;
 
@@ -33,6 +38,7 @@ public class TicketServiceImpl implements TicketService {
     private final TicketSearchCache cache;
     private final TrainRouteIndex routeIndex;
     private final IndexedTicketSearchService indexedSearch;
+    private final SeatAvailabilityService seatAvailabilityService;
     private final Counter cacheHits;
     private final Counter cacheWaitHits;
     private final Counter cacheLockFallbacks;
@@ -46,6 +52,7 @@ public class TicketServiceImpl implements TicketService {
                              TicketSearchCache cache,
                              TrainRouteIndex routeIndex,
                              IndexedTicketSearchService indexedSearch,
+                             SeatAvailabilityService seatAvailabilityService,
                              MeterRegistry meterRegistry,
                              @Value("${ticket.cache.rebuild-wait-attempts:5}")
                              int rebuildWaitAttempts,
@@ -55,6 +62,7 @@ public class TicketServiceImpl implements TicketService {
         this.cache = cache;
         this.routeIndex = routeIndex;
         this.indexedSearch = indexedSearch;
+        this.seatAvailabilityService = seatAvailabilityService;
         this.cacheHits = meterRegistry.counter(
                 "ticket.search.path.cache.hit");
         this.cacheWaitHits = meterRegistry.counter(
@@ -159,15 +167,45 @@ public class TicketServiceImpl implements TicketService {
             return result;
         }
 
-        // 4. 按 id 查席别余票（一行 = 一个车次 + 一个席别）
-        List<TicketSeatRow> rows = mapper.findSeatRows(q, ids);
+        // 4. 按 id 查询每个车段的座位位图
+        List<TicketSeatRow> rows = mapper.findSeatSegmentRows(q, ids);
 
-        // 5. 按车次合并席别
+        // 5. 按车次和席别分组，再在业务层计算连续余票
+        Map<Long, Map<Integer, List<TicketSeatRow>>> grouped =
+                new LinkedHashMap<>();
+        for (TicketSeatRow row : rows) {
+            grouped.computeIfAbsent(row.getTrainId(),
+                            ignored -> new LinkedHashMap<>())
+                    .computeIfAbsent(row.getSeatType(),
+                            ignored -> new ArrayList<>())
+                    .add(row);
+        }
+
         Map<Long, TicketVO> byTrain = new HashMap<>();
-        for (TicketSeatRow r : rows) {
-            TicketVO vo = byTrain.computeIfAbsent(r.getTrainId(), id -> toVO(r));
-            vo.getSeats().add(new TicketSeatVO(
-                    r.getSeatType(), r.getRemainCount(), r.getPrice()));
+        for (Map.Entry<Long, Map<Integer, List<TicketSeatRow>>> trainEntry
+                : grouped.entrySet()) {
+            Map<Integer, List<TicketSeatRow>> bySeat = trainEntry.getValue();
+            if (bySeat.isEmpty()) {
+                continue;
+            }
+            TicketVO vo = toVO(bySeat.values().iterator().next().get(0));
+            for (Map.Entry<Integer, List<TicketSeatRow>> seatEntry
+                    : bySeat.entrySet()) {
+                List<TicketSeatRow> seatRows = seatEntry.getValue();
+                List<TicketStock> stockRows = new ArrayList<>(seatRows.size());
+                BigDecimal price = BigDecimal.ZERO;
+                for (TicketSeatRow row : seatRows) {
+                    stockRows.add(toStock(row));
+                    price = price.add(row.getPrice());
+                }
+                SeatAvailability availability =
+                        seatAvailabilityService.calculate(stockRows);
+                vo.getSeats().add(new TicketSeatVO(
+                        seatEntry.getKey(),
+                        availability.remainingCount(),
+                        price));
+            }
+            byTrain.put(trainEntry.getKey(), vo);
         }
 
         // 6. 按 id 的原顺序输出（SQL 已经按发车时间排好）
@@ -270,5 +308,17 @@ public class TicketServiceImpl implements TicketService {
         vo.setDurationMinutes(r.getDurationMinutes());
         vo.setMileage(r.getMileage());
         return vo;
+    }
+
+    private TicketStock toStock(TicketSeatRow row) {
+        TicketStock stock = new TicketStock();
+        stock.setTrainId(row.getTrainId());
+        stock.setSeatType(row.getSeatType());
+        stock.setSegmentIndex(row.getSegmentIndex());
+        stock.setTotalCount(row.getTotalCount());
+        stock.setSoldCount(row.getSoldCount());
+        stock.setRemainingCount(row.getRemainingCount());
+        stock.setSoldSeatMask(row.getSoldSeatMask());
+        return stock;
     }
 }

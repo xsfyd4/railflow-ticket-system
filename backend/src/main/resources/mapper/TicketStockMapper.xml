@@ -14,12 +14,14 @@
     <insert id="batchInsertIgnore">
         INSERT INTO ticket_stock
             (travel_date, train_id, segment_index, seat_type,
-             from_station_id, to_station_id, total_count, sold_count, remaining_count)
+             from_station_id, to_station_id, total_count, sold_count,
+             remaining_count, sold_seat_mask)
         VALUES
         <foreach collection="list" item="s" separator=",">
             (#{s.travelDate}, #{s.trainId}, #{s.segmentIndex}, #{s.seatType},
              #{s.fromStationId}, #{s.toStationId},
-             #{s.totalCount}, #{s.soldCount}, #{s.remainingCount})
+             #{s.totalCount}, #{s.soldCount},
+             #{s.remainingCount}, #{s.soldSeatMask})
         </foreach>
         ON DUPLICATE KEY UPDATE id = id
     </insert>
@@ -52,7 +54,8 @@
             resultType="com.ticket.module.stock.entity.TicketStock">
         SELECT id, travel_date, train_id, segment_index, seat_type,
                from_station_id, to_station_id,
-               total_count, sold_count, remaining_count, version, updated_at
+               total_count, sold_count, remaining_count,
+               sold_seat_mask, version, updated_at
         FROM ticket_stock
         WHERE travel_date = #{travelDate}
           AND train_id = #{trainId}
@@ -62,11 +65,28 @@
         ORDER BY segment_index
     </select>
 
+    <select id="findRowsForRangeForUpdate"
+            resultType="com.ticket.module.stock.entity.TicketStock">
+        SELECT id, travel_date, train_id, segment_index, seat_type,
+               from_station_id, to_station_id,
+               total_count, sold_count, remaining_count,
+               sold_seat_mask, version, updated_at
+        FROM ticket_stock
+        WHERE travel_date = #{travelDate}
+          AND train_id = #{trainId}
+          AND seat_type = #{seatType}
+          AND segment_index BETWEEN #{fromSegmentIndex}
+                                AND #{toSegmentIndex}
+        ORDER BY segment_index
+        FOR UPDATE
+    </select>
+
     <select id="findForRedisMaintenance"
             resultType="com.ticket.module.stock.entity.TicketStock">
         SELECT id, travel_date, train_id, segment_index, seat_type,
                from_station_id, to_station_id,
-               total_count, sold_count, remaining_count, version, updated_at
+               total_count, sold_count, remaining_count,
+               sold_seat_mask, version, updated_at
         FROM ticket_stock
         WHERE travel_date &gt;= #{startDate}
           AND travel_date &lt; #{endDateExclusive}
@@ -79,7 +99,8 @@
             resultType="com.ticket.module.stock.entity.TicketStock">
         SELECT id, travel_date, train_id, segment_index, seat_type,
                from_station_id, to_station_id,
-               total_count, sold_count, remaining_count, version, updated_at
+               total_count, sold_count, remaining_count,
+               sold_seat_mask, version, updated_at
         FROM ticket_stock
         WHERE travel_date = #{travelDate}
           AND train_id IN
@@ -98,11 +119,21 @@
         WHERE s.id = #{id}
     </select>
 
-    <!-- 手工调整：remaining 改了，sold 也要跟着改，否则两个数对不上 -->
+    <!-- 手工调整：remaining、sold 和具体座位位图必须同时更新。 -->
     <update id="updateRemaining">
         UPDATE ticket_stock
         SET remaining_count = #{remaining},
-            sold_count      = total_count - #{remaining},
+            sold_count      = #{soldCount},
+            sold_seat_mask  = #{soldSeatMask},
+            version         = version + 1
+        WHERE id = #{id}
+    </update>
+
+    <update id="updateSeatState">
+        UPDATE ticket_stock
+        SET sold_count      = #{soldCount},
+            remaining_count = #{remainingCount},
+            sold_seat_mask  = #{soldSeatMask},
             version         = version + 1
         WHERE id = #{id}
     </update>

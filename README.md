@@ -29,19 +29,22 @@ Redis Lua 分段库存预扣、预热与对账，以及 RabbitMQ 异步下单。
 | 后端 API | http://127.0.0.1:8080/api |
 | RabbitMQ 管理台 | http://127.0.0.1:15672 |
 
-## 核心业务模型：分段库存
+## 核心业务模型：分段库存与座位位图
 
 一趟车沿途停 N 个站，就把它切成 N-1 个「相邻站段」。票不是按「任意起点到任意终点」整段存，
-而是**每一段各存一份库存**：
+而是**每一段各存一份库存和已售座位位图**：
 
-- 查 北京南 → 上海虹桥 有没有票：看中间每一段，取**余票最小值**
-- 买 1 张 北京南 → 上海虹桥：中间每一段**各减 1**
-- 退 1 张：中间每一段**各加 1**
+- 查北京南 → 上海虹桥：合并中间每一段的已售座位位图，再对总座位位图取补集
+- 连续余票数：统计全程空闲位图中的 `1`，而不是简单取每段 `remaining_count` 最小值
+- 买票：先选一个在全部覆盖车段都空闲的具体座位，再写入每一段位图
+- 退票：只清除该座位在覆盖车段中的占用位
 
 这样做的好处是段数少（5 站车只要 4 条记录，而不是 10 条），
-而且天然支持「座位复用」：A→B 段被占用了，B→C 段还能卖给别人。
+同时支持座位复用和同座到底：A→B 段被占用后，B→C 段仍可卖给别人；
+但同一张 A→C 的票必须始终使用同一个座位。
 
-详细推导见 [docs/02-数据库设计.md](docs/02-数据库设计.md)。
+详细推导见 [docs/02-数据库设计.md](docs/02-数据库设计.md) 和
+[docs/13-座位位图库存设计.md](docs/13-座位位图库存设计.md)。
 
 ## 查票读模型
 
@@ -222,13 +225,14 @@ TICKET_REDIS_RECONCILE_ENABLED=true
 
 `pay_log` 是运行时交易流水，不做演示初始化。只有用户发起真实或模拟支付后才会产生记录。
 
-已经用旧版脚本建过库时，按顺序执行三个增量迁移：
+已经用旧版脚本建过库时，按顺序执行增量迁移：
 
 ```bash
 mysql -u root -p train_ticket < sql/05-order-request.sql
 mysql -u root -p train_ticket < sql/06-order-request-reservation.sql
 mysql -u root -p train_ticket < sql/08-order-flow-reliability.sql
 mysql -u root -p train_ticket < sql/09-simplify-order-flow-states.sql
+mysql -u root -p train_ticket < sql/10-seat-bitmap.sql
 ```
 
 异步下单接口：

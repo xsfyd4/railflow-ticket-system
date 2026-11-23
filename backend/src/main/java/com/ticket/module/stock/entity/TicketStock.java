@@ -21,6 +21,7 @@ public class TicketStock {
     private Integer totalCount;
     private Integer soldCount;
     private Integer remainingCount;
+    private byte[] soldSeatMask;
     private Integer version;
     private LocalDateTime updatedAt;
 
@@ -102,6 +103,14 @@ public class TicketStock {
 
     public void setRemainingCount(Integer remainingCount) {
         this.remainingCount = remainingCount;
+    }
+
+    public byte[] getSoldSeatMask() {
+        return soldSeatMask;
+    }
+
+    public void setSoldSeatMask(byte[] soldSeatMask) {
+        this.soldSeatMask = soldSeatMask;
     }
 
     public Integer getVersion() {

@@ -10,7 +10,6 @@ import com.ticket.module.train.vo.TrainPriceVO;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 
-import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 
@@ -30,19 +29,6 @@ public interface OrderMapper {
                                   @Param("seatType") Integer seatType,
                                   @Param("fromSegmentIndex") Integer fromSegmentIndex,
                                   @Param("toSegmentIndex") Integer toSegmentIndex);
-
-    /**
-     * 条件扣减库存。
-     *
-     * <p>任何一段余票不足时，该段不会更新，返回行数会小于覆盖段数，
-     * Service 据此抛异常并让整个事务回滚。
-     */
-    int deductStock(@Param("travelDate") LocalDate travelDate,
-                    @Param("trainId") Long trainId,
-                    @Param("seatType") Integer seatType,
-                    @Param("fromSegmentIndex") Integer fromSegmentIndex,
-                    @Param("toSegmentIndex") Integer toSegmentIndex,
-                    @Param("count") Integer count);
 
     int insertOrder(TicketOrder order);
 
@@ -85,14 +71,6 @@ public interface OrderMapper {
     /** 只有待支付订单才能改成已取消。 */
     int markCancelled(@Param("id") Long id,
                       @Param("cancelledAt") LocalDateTime cancelledAt);
-
-    /** 按订单保存的起止段区间回补库存。 */
-    int restoreStock(@Param("travelDate") LocalDate travelDate,
-                     @Param("trainId") Long trainId,
-                     @Param("seatType") Integer seatType,
-                     @Param("fromSegmentIndex") Integer fromSegmentIndex,
-                     @Param("toSegmentIndex") Integer toSegmentIndex,
-                     @Param("count") Integer count);
 
     /** 查询已经到期、仍处于待支付状态的订单 id。 */
     List<Long> findExpiredPendingOrderIds(@Param("limit") int limit);

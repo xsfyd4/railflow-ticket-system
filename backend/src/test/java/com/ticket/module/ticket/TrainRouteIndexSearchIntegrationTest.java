@@ -9,6 +9,7 @@ import io.micrometer.core.instrument.MeterRegistry;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.time.LocalDate;
 
@@ -36,6 +37,9 @@ class TrainRouteIndexSearchIntegrationTest {
 
     @Autowired
     private MeterRegistry meterRegistry;
+
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
 
     @Test
     void shouldBuildRouteIndexAndServeSearchFromIndex() throws Exception {
@@ -68,7 +72,9 @@ class TrainRouteIndexSearchIntegrationTest {
         TicketSearchDTO query = new TicketSearchDTO();
         query.setFromStationId(1L);
         query.setToStationId(27L);
-        query.setTravelDate(LocalDate.of(2026, 10, 30));
+        query.setTravelDate(jdbcTemplate.queryForObject(
+                "SELECT MIN(travel_date) FROM ticket_stock",
+                LocalDate.class));
         query.setSeatType(3);
         query.setPage(1);
         query.setSize(10);

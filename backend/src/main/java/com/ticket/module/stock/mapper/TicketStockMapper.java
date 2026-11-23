@@ -40,6 +40,16 @@ public interface TicketStockMapper {
             @Param("toSegmentIndex") Integer toSegmentIndex);
 
     /**
+     * 锁定连续车段库存，供下单和退票在事务内基于最新位图重新计算。
+     */
+    List<TicketStock> findRowsForRangeForUpdate(
+            @Param("travelDate") LocalDate travelDate,
+            @Param("trainId") Long trainId,
+            @Param("seatType") Integer seatType,
+            @Param("fromSegmentIndex") Integer fromSegmentIndex,
+            @Param("toSegmentIndex") Integer toSegmentIndex);
+
+    /**
      * 按主键游标扫描未来库存，供预热和对账分批处理。
      */
     List<TicketStock> findForRedisMaintenance(
@@ -63,5 +73,13 @@ public interface TicketStockMapper {
      * sold_count 同步改成 total_count - remaining，保证一致性。
      */
     int updateRemaining(@Param("id") Long id,
-                        @Param("remaining") Integer remaining);
+                        @Param("remaining") Integer remaining,
+                        @Param("soldCount") Integer soldCount,
+                        @Param("soldSeatMask") byte[] soldSeatMask);
+
+    /** 按锁内计算出的完整位图更新单段库存。 */
+    int updateSeatState(@Param("id") Long id,
+                        @Param("soldCount") Integer soldCount,
+                        @Param("remainingCount") Integer remainingCount,
+                        @Param("soldSeatMask") byte[] soldSeatMask);
 }

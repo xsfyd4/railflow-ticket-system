@@ -8,6 +8,7 @@ import com.ticket.module.stock.dto.StockGenerateDTO;
 import com.ticket.module.stock.dto.StockQueryDTO;
 import com.ticket.module.stock.entity.TicketStock;
 import com.ticket.module.stock.mapper.TicketStockMapper;
+import com.ticket.module.stock.seat.SeatMask;
 import com.ticket.module.stock.vo.StockVO;
 import com.ticket.module.ticket.TicketCacheInvalidator;
 import com.ticket.module.train.entity.Train;
@@ -21,6 +22,7 @@ import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.IntStream;
 
 @Service
 public class StockServiceImpl implements StockService {
@@ -112,7 +114,15 @@ public class StockServiceImpl implements StockService {
             throw new BizException(400,
                     "剩余票数不能大于总票数（" + stock.getTotalCount() + "）");
         }
-        stockMapper.updateRemaining(id, dto.getRemainingCount());
+        int soldCount = stock.getTotalCount() - dto.getRemainingCount();
+        SeatMask soldMask = SeatMask.ofSeatIndexes(
+                stock.getTotalCount(),
+                IntStream.rangeClosed(1, soldCount).boxed().toList());
+        stockMapper.updateRemaining(
+                id,
+                dto.getRemainingCount(),
+                soldCount,
+                soldMask.toBytes());
         cacheInvalidator.invalidateDateAfterCommit(stock.getTravelDate());
         stockCache.refreshAfterCommit(
                 stock.getTravelDate(),
@@ -135,6 +145,7 @@ public class StockServiceImpl implements StockService {
         s.setTotalCount(capacity);
         s.setSoldCount(0);
         s.setRemainingCount(capacity);
+        s.setSoldSeatMask(SeatMask.empty(capacity).toBytes());
         return s;
     }
 }

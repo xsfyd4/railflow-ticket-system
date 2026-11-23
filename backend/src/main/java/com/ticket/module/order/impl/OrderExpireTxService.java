@@ -4,12 +4,15 @@ import com.ticket.common.exception.BizException;
 import com.ticket.common.result.ResultCode;
 import com.ticket.module.order.entity.TicketOrder;
 import com.ticket.module.order.mapper.OrderMapper;
+import com.ticket.module.order.vo.OrderItemVO;
 import com.ticket.module.stock.TicketStockCache;
+import com.ticket.module.stock.seat.SeatStockService;
 import com.ticket.module.ticket.TicketCacheInvalidator;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 /**
  * 处理单个过期订单。
@@ -25,13 +28,16 @@ public class OrderExpireTxService {
     private final OrderMapper orderMapper;
     private final TicketCacheInvalidator cacheInvalidator;
     private final TicketStockCache stockCache;
+    private final SeatStockService seatStockService;
 
     public OrderExpireTxService(OrderMapper orderMapper,
                                 TicketCacheInvalidator cacheInvalidator,
-                                TicketStockCache stockCache) {
+                                TicketStockCache stockCache,
+                                SeatStockService seatStockService) {
         this.orderMapper = orderMapper;
         this.cacheInvalidator = cacheInvalidator;
         this.stockCache = stockCache;
+        this.seatStockService = seatStockService;
     }
 
     /**
@@ -50,18 +56,13 @@ public class OrderExpireTxService {
             return false;
         }
 
-        int segmentCount =
-                order.getToSegmentIndex() - order.getFromSegmentIndex() + 1;
-        int stockAffected = orderMapper.restoreStock(
-                order.getTravelDate(),
-                order.getTrainId(),
-                order.getSeatType(),
-                order.getFromSegmentIndex(),
-                order.getToSegmentIndex(),
-                order.getPassengerCount());
-        if (stockAffected != segmentCount) {
+        List<OrderItemVO> items = orderMapper.findItemsByOrderId(order.getId());
+        if (items.size() != order.getPassengerCount()) {
             throw new BizException(ResultCode.ORDER_STOCK_RESTORE_ERROR);
         }
+        seatStockService.release(
+                order,
+                items.stream().map(OrderItemVO::getSeatIndex).toList());
 
         int orderAffected = orderMapper.markCancelled(order.getId(), now);
         if (orderAffected != 1) {

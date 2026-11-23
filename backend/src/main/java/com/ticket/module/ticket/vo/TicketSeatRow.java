@@ -19,6 +19,11 @@ public class TicketSeatRow {
     private Integer durationMinutes;
     private BigDecimal mileage;
     private Integer seatType;
+    private Integer segmentIndex;
+    private Integer totalCount;
+    private Integer soldCount;
+    private Integer remainingCount;
+    private byte[] soldSeatMask;
     private Integer remainCount;
     private BigDecimal price;
 
@@ -100,6 +105,46 @@ public class TicketSeatRow {
 
     public void setSeatType(Integer seatType) {
         this.seatType = seatType;
+    }
+
+    public Integer getSegmentIndex() {
+        return segmentIndex;
+    }
+
+    public void setSegmentIndex(Integer segmentIndex) {
+        this.segmentIndex = segmentIndex;
+    }
+
+    public Integer getTotalCount() {
+        return totalCount;
+    }
+
+    public void setTotalCount(Integer totalCount) {
+        this.totalCount = totalCount;
+    }
+
+    public Integer getSoldCount() {
+        return soldCount;
+    }
+
+    public void setSoldCount(Integer soldCount) {
+        this.soldCount = soldCount;
+    }
+
+    public Integer getRemainingCount() {
+        return remainingCount;
+    }
+
+    public void setRemainingCount(Integer remainingCount) {
+        this.remainingCount = remainingCount;
+    }
+
+    public byte[] getSoldSeatMask() {
+        return soldSeatMask;
+    }
+
+    public void setSoldSeatMask(byte[] soldSeatMask) {
+        this.soldSeatMask = soldSeatMask;
     }
 
     public Integer getRemainCount() {

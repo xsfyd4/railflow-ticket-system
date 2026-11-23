@@ -12,6 +12,7 @@ import com.ticket.module.order.vo.OrderDetailVO;
 import com.ticket.module.order.vo.OrderVO;
 import com.ticket.module.order.vo.RefundResultVO;
 import com.ticket.module.stock.TicketStockCache;
+import com.ticket.module.stock.seat.SeatMask;
 import com.ticket.security.LoginUser;
 import com.ticket.security.LoginUserContext;
 import org.junit.jupiter.api.AfterEach;
@@ -100,6 +101,10 @@ class OrderServiceImplIntegrationTest {
         assertEquals(2, count(
                 "SELECT COUNT(*) FROM ticket_order_item WHERE order_id = ?",
                 result.getOrderId()));
+        assertEquals(List.of(1, 2), orderSeatIndexes(result.getOrderId()));
+        assertEquals(List.of(2, 2, 2, 2), soldMaskCardinalities(10));
+        assertEquals(1, soldMaskHexes().stream().distinct().count(),
+                "同一订单的所有车段必须占用完全相同的座位");
 
         OrderQueryDTO query = new OrderQueryDTO();
         query.setStatus(0);
@@ -115,6 +120,49 @@ class OrderServiceImplIntegrationTest {
         assertEquals("110***********1234",
                 detail.getItems().get(0).getIdCardNo(),
                 "订单详情必须返回脱敏证件号");
+    }
+
+    @Test
+    void shouldRejectWhenEachSegmentHasSeatsButNoContinuousSeatExists() {
+        UserPassenger primary =
+                createUserAndPassenger(PRIMARY_USER, "110101199001011234");
+        prepareStock(3);
+
+        jdbcTemplate.update("""
+                UPDATE ticket_stock
+                SET sold_seat_mask = ?,
+                    sold_count = 2,
+                    remaining_count = 1
+                WHERE travel_date = ?
+                  AND train_id = ?
+                  AND seat_type = ?
+                  AND segment_index = 1
+                """,
+                SeatMask.ofSeatIndexes(3, List.of(1, 2)).toBytes(),
+                TEST_DATE, TRAIN_ID, SEAT_TYPE);
+        jdbcTemplate.update("""
+                UPDATE ticket_stock
+                SET sold_seat_mask = ?,
+                    sold_count = 2,
+                    remaining_count = 1
+                WHERE travel_date = ?
+                  AND train_id = ?
+                  AND seat_type = ?
+                  AND segment_index = 2
+                """,
+                SeatMask.ofSeatIndexes(3, List.of(2, 3)).toBytes(),
+                TEST_DATE, TRAIN_ID, SEAT_TYPE);
+
+        LoginUserContext.set(
+                new LoginUser(primary.userId(), PRIMARY_USER, "USER"));
+        BizException error = assertThrows(BizException.class,
+                () -> orderService.create(
+                        dto(List.of(primary.passengerId()))));
+
+        assertEquals(2001, error.getCode());
+        assertEquals(0, count(
+                "SELECT COUNT(*) FROM ticket_order WHERE user_id = ?",
+                primary.userId()));
     }
 
     @Test
@@ -689,6 +737,40 @@ class OrderServiceImplIntegrationTest {
                   AND seat_type = ?
                 ORDER BY segment_index
                 """, Integer.class, TEST_DATE, TRAIN_ID, SEAT_TYPE);
+    }
+
+    private List<Integer> orderSeatIndexes(Long orderId) {
+        return jdbcTemplate.queryForList("""
+                SELECT seat_index
+                FROM ticket_order_item
+                WHERE order_id = ?
+                ORDER BY seat_index
+                """, Integer.class, orderId);
+    }
+
+    private List<Integer> soldMaskCardinalities(int seatCount) {
+        return jdbcTemplate.query("""
+                SELECT sold_seat_mask
+                FROM ticket_stock
+                WHERE travel_date = ?
+                  AND train_id = ?
+                  AND seat_type = ?
+                ORDER BY segment_index
+                """,
+                (rs, rowNum) -> SeatMask.fromBytes(
+                        rs.getBytes(1), seatCount).cardinality(),
+                TEST_DATE, TRAIN_ID, SEAT_TYPE);
+    }
+
+    private List<String> soldMaskHexes() {
+        return jdbcTemplate.queryForList("""
+                SELECT HEX(sold_seat_mask)
+                FROM ticket_stock
+                WHERE travel_date = ?
+                  AND train_id = ?
+                  AND seat_type = ?
+                ORDER BY segment_index
+                """, String.class, TEST_DATE, TRAIN_ID, SEAT_TYPE);
     }
 
     private BigDecimal queryPrice() {

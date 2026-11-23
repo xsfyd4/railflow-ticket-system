@@ -48,6 +48,7 @@ public enum ResultCode {
     ASYNC_MQ_UNAVAILABLE(2018, "下单队列暂不可用，请稍后重试"),
     ORDER_IDEMPOTENCY_CONFLICT(2019, "该下单幂等键已被其他订单使用"),
     ORDER_IDEMPOTENCY_PROCESSING(2020, "订单请求正在处理中，请稍后查询"),
+    STOCK_DATA_ERROR(2021, "座位库存数据不一致，请联系管理员"),
 
     STATION_CODE_EXISTS(3001, "车站三字码已存在"),
     STATION_NOT_FOUND(3002, "车站不存在"),

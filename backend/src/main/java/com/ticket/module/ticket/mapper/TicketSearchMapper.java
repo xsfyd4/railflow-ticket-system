@@ -31,6 +31,13 @@ public interface TicketSearchMapper {
                                      @Param("trainIds") List<Long> trainIds);
 
     /**
+     * 慢查询降级路径使用：保留每个车段的库存位图，由业务层计算连续余票。
+     */
+    List<TicketSeatRow> findSeatSegmentRows(
+            @Param("q") TicketSearchDTO q,
+            @Param("trainIds") List<Long> trainIds);
+
+    /**
      * 从停站关系抽取有方向的站对，作为查票对象预热的候选线路。
      */
     List<TicketSearchDTO> findWarmupStationPairs(

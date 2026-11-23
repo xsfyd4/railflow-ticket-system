@@ -3,6 +3,8 @@ package com.ticket.module.ticket.impl;
 import com.ticket.common.result.PageResult;
 import com.ticket.module.stock.entity.TicketStock;
 import com.ticket.module.stock.mapper.TicketStockMapper;
+import com.ticket.module.stock.seat.SeatAvailability;
+import com.ticket.module.stock.seat.SeatAvailabilityService;
 import com.ticket.module.ticket.RouteBucket;
 import com.ticket.module.ticket.TrainRouteIndex;
 import com.ticket.module.ticket.dto.TicketSearchDTO;
@@ -24,11 +26,14 @@ public class IndexedTicketSearchService {
 
     private final TrainRouteIndex routeIndex;
     private final TicketStockMapper stockMapper;
+    private final SeatAvailabilityService seatAvailabilityService;
 
     public IndexedTicketSearchService(TrainRouteIndex routeIndex,
-                                      TicketStockMapper stockMapper) {
+                                      TicketStockMapper stockMapper,
+                                      SeatAvailabilityService seatAvailabilityService) {
         this.routeIndex = routeIndex;
         this.stockMapper = stockMapper;
+        this.seatAvailabilityService = seatAvailabilityService;
     }
 
     public PageResult<TicketVO> search(TicketSearchDTO query) {
@@ -45,7 +50,7 @@ public class IndexedTicketSearchService {
         }
         List<TicketStock> stockRows = stockMapper.findForSearch(
                 query.getTravelDate(), trainIds);
-        Map<Long, Map<Integer, Map<Integer, Integer>>> stock =
+        Map<Long, Map<Integer, Map<Integer, TicketStock>>> stock =
                 indexStock(stockRows);
 
         List<TicketVO> allSellable = new ArrayList<>();
@@ -65,9 +70,9 @@ public class IndexedTicketSearchService {
                 allSellable.subList(from, to));
     }
 
-    private Map<Long, Map<Integer, Map<Integer, Integer>>> indexStock(
+    private Map<Long, Map<Integer, Map<Integer, TicketStock>>> indexStock(
             List<TicketStock> rows) {
-        Map<Long, Map<Integer, Map<Integer, Integer>>> result =
+        Map<Long, Map<Integer, Map<Integer, TicketStock>>> result =
                 new HashMap<>();
         for (TicketStock row : rows) {
             result
@@ -75,8 +80,7 @@ public class IndexedTicketSearchService {
                             ignored -> new HashMap<>())
                     .computeIfAbsent(row.getSeatType(),
                             ignored -> new HashMap<>())
-                    .put(row.getSegmentIndex(),
-                            row.getRemainingCount());
+                    .put(row.getSegmentIndex(), row);
         }
         return result;
     }
@@ -84,7 +88,7 @@ public class IndexedTicketSearchService {
     private TicketVO toTicket(
             RouteBucket bucket,
             int index,
-            Map<Long, Map<Integer, Map<Integer, Integer>>> stock,
+            Map<Long, Map<Integer, Map<Integer, TicketStock>>> stock,
             TicketSearchDTO query) {
         long trainId = bucket.getTrainIds()[index];
         int fromSegment = bucket.getFromSegmentIndexes()[index];
@@ -99,13 +103,25 @@ public class IndexedTicketSearchService {
             if (price == null) {
                 continue;
             }
-            Map<Integer, Integer> remains = stock
+            Map<Integer, TicketStock> segmentRows = stock
                     .getOrDefault(trainId, Map.of())
                     .getOrDefault(seatType, Map.of());
-            Integer remain = minimumRemaining(
-                    remains, fromSegment, toSegment);
-            if (remain != null) {
-                seats.add(new TicketSeatVO(seatType, remain, price));
+            List<TicketStock> rows = new ArrayList<>();
+            for (int segment = fromSegment; segment <= toSegment; segment++) {
+                TicketStock row = segmentRows.get(segment);
+                if (row == null) {
+                    rows.clear();
+                    break;
+                }
+                rows.add(row);
+            }
+            if (!rows.isEmpty()) {
+                SeatAvailability availability =
+                        seatAvailabilityService.calculate(rows);
+                seats.add(new TicketSeatVO(
+                        seatType,
+                        availability.remainingCount(),
+                        price));
             }
         }
         if (seats.isEmpty()) {
@@ -129,20 +145,4 @@ public class IndexedTicketSearchService {
         return ticket;
     }
 
-    private Integer minimumRemaining(Map<Integer, Integer> remains,
-                                     int fromSegment,
-                                     int toSegment) {
-        Integer minimum = null;
-        for (int segment = fromSegment;
-             segment <= toSegment;
-             segment++) {
-            Integer remain = remains.get(segment);
-            if (remain == null) {
-                return null;
-            }
-            minimum = minimum == null
-                    ? remain : Math.min(minimum, remain);
-        }
-        return minimum;
-    }
 }

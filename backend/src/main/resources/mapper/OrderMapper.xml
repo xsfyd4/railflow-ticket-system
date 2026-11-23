@@ -38,24 +38,6 @@
         ORDER BY segment_index
     </select>
 
-    <!--
-      防超卖核心 SQL。
-      remaining_count >= count 的判断和减法由数据库原子执行。
-      任何一段余票不足，这段就不会更新，返回行数小于覆盖段数。
-    -->
-    <update id="deductStock">
-        UPDATE ticket_stock
-        SET sold_count      = sold_count + #{count},
-            remaining_count = remaining_count - #{count},
-            version         = version + 1
-        WHERE travel_date = #{travelDate}
-          AND train_id = #{trainId}
-          AND seat_type = #{seatType}
-          AND segment_index BETWEEN #{fromSegmentIndex}
-                                AND #{toSegmentIndex}
-          AND remaining_count &gt;= #{count}
-    </update>
-
     <insert id="insertOrder" useGeneratedKeys="true" keyProperty="id">
         INSERT INTO ticket_order
             (order_no, request_id, user_id, train_id, train_no, travel_date,
@@ -74,13 +56,14 @@
     <insert id="batchInsertItems">
         INSERT INTO ticket_order_item
             (order_id, passenger_id, passenger_name, id_card_no,
-             seat_type, price, coach_no, seat_no, status)
+             seat_type, price, coach_no, seat_no, seat_index, status)
         VALUES
         <foreach collection="items" item="item" separator=",">
             (#{item.orderId}, #{item.passengerId},
              #{item.passengerName}, #{item.idCardNo},
              #{item.seatType}, #{item.price},
-             #{item.coachNo}, #{item.seatNo}, #{item.status})
+             #{item.coachNo}, #{item.seatNo},
+             #{item.seatIndex}, #{item.status})
         </foreach>
     </insert>
 
@@ -148,6 +131,7 @@
                price,
                coach_no,
                seat_no,
+               seat_index,
                status,
                refunded_at
         FROM ticket_order_item
@@ -226,24 +210,6 @@
           AND status = 0
     </update>
 
-    <!--
-      取消订单时按订单保存的区间统一回补。
-      上限条件防止重复操作或脏数据把 remaining_count 刷到总票数以上。
-    -->
-    <update id="restoreStock">
-        UPDATE ticket_stock
-        SET sold_count      = sold_count - #{count},
-            remaining_count = remaining_count + #{count},
-            version         = version + 1
-        WHERE travel_date = #{travelDate}
-          AND train_id = #{trainId}
-          AND seat_type = #{seatType}
-          AND segment_index BETWEEN #{fromSegmentIndex}
-                                AND #{toSegmentIndex}
-          AND sold_count &gt;= #{count}
-          AND remaining_count + #{count} &lt;= total_count
-    </update>
-
     <select id="findExpiredPendingOrderIds" resultType="long">
         SELECT id
         FROM ticket_order
@@ -271,7 +237,7 @@
     <select id="findItemsByIdsForUpdate"
             resultType="com.ticket.module.order.entity.TicketOrderItem">
         SELECT id, order_id, passenger_id, passenger_name, id_card_no,
-               seat_type, price, coach_no, seat_no, status,
+               seat_type, price, coach_no, seat_no, seat_index, status,
                refunded_at, created_at
         FROM ticket_order_item
         WHERE order_id = #{orderId}

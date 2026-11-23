@@ -17,6 +17,7 @@ public class TicketOrderItem {
     private BigDecimal price;
     private String coachNo;
     private String seatNo;
+    private Integer seatIndex;
     private Integer status;
     private LocalDateTime refundedAt;
     private LocalDateTime createdAt;
@@ -91,6 +92,14 @@ public class TicketOrderItem {
 
     public void setSeatNo(String seatNo) {
         this.seatNo = seatNo;
+    }
+
+    public Integer getSeatIndex() {
+        return seatIndex;
+    }
+
+    public void setSeatIndex(Integer seatIndex) {
+        this.seatIndex = seatIndex;
     }
 
     public Integer getStatus() {

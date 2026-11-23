@@ -26,6 +26,11 @@ import com.ticket.module.order.vo.RefundResultVO;
 import com.ticket.module.passenger.entity.Passenger;
 import com.ticket.module.passenger.mapper.PassengerMapper;
 import com.ticket.module.stock.TicketStockCache;
+import com.ticket.module.stock.entity.TicketStock;
+import com.ticket.module.stock.seat.SeatAvailability;
+import com.ticket.module.stock.seat.SeatAvailabilityService;
+import com.ticket.module.stock.seat.SeatSelection;
+import com.ticket.module.stock.seat.SeatStockService;
 import com.ticket.module.ticket.TicketCacheInvalidator;
 import com.ticket.module.train.vo.TrainPriceVO;
 import com.ticket.security.LoginUser;
@@ -119,6 +124,8 @@ public class OrderServiceImpl implements OrderService {
     /** 同步 HTTP 下单成功后，把 Redis 数字库存同步减掉。 */
     private final TicketStockCache stockCache;
     private final RedisIdempotencyStore idempotencyStore;
+    private final SeatStockService seatStockService;
+    private final SeatAvailabilityService seatAvailabilityService;
 
     /**
      * 构造器注入。
@@ -132,7 +139,9 @@ public class OrderServiceImpl implements OrderService {
                             OrderPayTxService payTxService,
                             TicketCacheInvalidator cacheInvalidator,
                             TicketStockCache stockCache,
-                            RedisIdempotencyStore idempotencyStore) {
+                            RedisIdempotencyStore idempotencyStore,
+                            SeatStockService seatStockService,
+                            SeatAvailabilityService seatAvailabilityService) {
         this.orderMapper = orderMapper;
         this.passengerMapper = passengerMapper;
         this.payLogMapper = payLogMapper;
@@ -140,6 +149,8 @@ public class OrderServiceImpl implements OrderService {
         this.cacheInvalidator = cacheInvalidator;
         this.stockCache = stockCache;
         this.idempotencyStore = idempotencyStore;
+        this.seatStockService = seatStockService;
+        this.seatAvailabilityService = seatAvailabilityService;
     }
 
     /**
@@ -267,34 +278,20 @@ public class OrderServiceImpl implements OrderService {
                 calculatePrice(prices, fromSegmentIndex, segmentCount);
 
         /*
-         * 第 4 步：一次性条件扣减区间内的所有分段库存。
-         *
-         * 对应 SQL 的关键条件：
-         *     remaining_count >= 购买人数
-         *
-         * 数据库在执行 UPDATE 时会对符合条件的库存行加锁。
-         * 如果两个请求同时抢最后一张票，第一个请求先扣成功并提交；
-         * 第二个请求等到锁释放后重新判断，发现余票已经不满足条件，
-         * 于是该行影响行数为 0，不会卖成负数。
-         *
-         * affected 是实际更新的库存行数。覆盖 4 段时，正常必须等于 4。
+         * 第 4 步：锁定区间库存，根据具体座位位图求连续余票并选座。
+         * 覆盖区间内所有车段都要在同一个事务里锁定，避免两个请求选中同一个座位。
          */
-        int affected = orderMapper.deductStock(
+        List<TicketStock> stockRows = seatStockService.lockRange(
                 dto.getTravelDate(),
                 dto.getTrainId(),
                 dto.getSeatType(),
                 fromSegmentIndex,
-                toSegmentIndex,
-                passengers.size());
-
-        /*
-         * 只要有一段没有扣成功，就说明该段余票不足。
-         * 注意：前面的其他段可能已经在本次事务里被 UPDATE 了，
-         * 但这里抛出异常后，@Transactional 会撤销本次事务的全部库存修改。
-         */
-        if (affected != segmentCount) {
-            throw new BizException(ResultCode.TICKET_NOT_ENOUGH);
-        }
+                toSegmentIndex);
+        SeatAvailability availability =
+                seatAvailabilityService.calculate(stockRows);
+        SeatSelection selection = seatAvailabilityService.select(
+                availability, passengers.size());
+        seatStockService.occupy(stockRows, selection.selected());
 
         /*
          * 第 5 步：库存预占成功后，落订单主表和订单明细。
@@ -320,10 +317,12 @@ public class OrderServiceImpl implements OrderService {
         // 每一位乘车人对应一条 ticket_order_item，最后一次性批量插入。
         List<TicketOrderItem> items =
                 new ArrayList<>(passengers.size());
-        for (Passenger passenger : passengers) {
+        for (int i = 0; i < passengers.size(); i++) {
+            Passenger passenger = passengers.get(i);
             items.add(buildItem(
                     order.getId(), dto.getSeatType(),
-                    pricePerPassenger, passenger));
+                    pricePerPassenger, passenger,
+                    selection.seatIndexes().get(i)));
         }
         orderMapper.batchInsertItems(items);
 
@@ -581,22 +580,15 @@ public class OrderServiceImpl implements OrderService {
             throw new BizException(ResultCode.ORDER_STATUS_ERROR);
         }
 
-        int segmentCount =
-                order.getToSegmentIndex() - order.getFromSegmentIndex() + 1;
-        int affected = orderMapper.restoreStock(
-                order.getTravelDate(),
-                order.getTrainId(),
-                order.getSeatType(),
-                order.getFromSegmentIndex(),
-                order.getToSegmentIndex(),
-                order.getPassengerCount());
-        if (affected != segmentCount) {
-            /*
-             * 库存行缺失或数据不一致时拒绝修改订单状态。
-             * 因为还在事务中，已经回补的库存也会撤销，避免重复退款或余票异常。
-             */
+        List<OrderItemVO> items = orderMapper.findItemsByOrderId(order.getId());
+        List<Integer> seatIndexes = items.stream()
+                .filter(item -> item.getStatus() != null && item.getStatus() != 2)
+                .map(OrderItemVO::getSeatIndex)
+                .toList();
+        if (seatIndexes.size() != order.getPassengerCount()) {
             throw new BizException(ResultCode.ORDER_STOCK_RESTORE_ERROR);
         }
+        seatStockService.release(order, seatIndexes);
 
         LocalDateTime now = LocalDateTime.now();
         int statusAffected = orderMapper.markCancelled(order.getId(), now);
@@ -665,18 +657,10 @@ public class OrderServiceImpl implements OrderService {
         }
 
         int refundCount = items.size();
-        int segmentCount =
-                order.getToSegmentIndex() - order.getFromSegmentIndex() + 1;
-        int stockAffected = orderMapper.restoreStock(
-                order.getTravelDate(),
-                order.getTrainId(),
-                order.getSeatType(),
-                order.getFromSegmentIndex(),
-                order.getToSegmentIndex(),
-                refundCount);
-        if (stockAffected != segmentCount) {
-            throw new BizException(ResultCode.ORDER_STOCK_RESTORE_ERROR);
-        }
+        List<Integer> seatIndexes = items.stream()
+                .map(TicketOrderItem::getSeatIndex)
+                .toList();
+        seatStockService.release(order, seatIndexes);
 
         LocalDateTime now = LocalDateTime.now();
         int itemAffected = orderMapper.markItemsRefunded(
@@ -832,7 +816,8 @@ public class OrderServiceImpl implements OrderService {
     private TicketOrderItem buildItem(Long orderId,
                                       Integer seatType,
                                       BigDecimal price,
-                                      Passenger passenger) {
+                                      Passenger passenger,
+                                      int seatIndex) {
         TicketOrderItem item = new TicketOrderItem();
 
         // order_id 把明细挂到订单主表上。
@@ -849,10 +834,22 @@ public class OrderServiceImpl implements OrderService {
         // 这是“一张票”的席别和价格。
         item.setSeatType(seatType);
         item.setPrice(price);
+        item.setSeatIndex(seatIndex);
+        item.setCoachNo(seatTypeName(seatType));
+        item.setSeatNo(String.format("%03d", seatIndex));
 
-        // 用户刚下单时还没有出具体车厢和座位，所以状态为待出票。
+        // 座位已经确定，票面状态仍等待后续出票流程。
         item.setStatus(ITEM_PENDING_TICKET);
         return item;
+    }
+
+    private String seatTypeName(Integer seatType) {
+        return switch (seatType) {
+            case 1 -> "商务座";
+            case 2 -> "一等座";
+            case 3 -> "二等座";
+            default -> "座位";
+        };
     }
 
     private CreateOrderVO toCreateOrderVO(TicketOrder order) {

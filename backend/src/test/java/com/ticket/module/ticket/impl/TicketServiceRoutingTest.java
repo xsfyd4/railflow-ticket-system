@@ -6,6 +6,7 @@ import com.ticket.module.ticket.TrainRouteIndex;
 import com.ticket.module.ticket.dto.TicketSearchDTO;
 import com.ticket.module.ticket.mapper.TicketSearchMapper;
 import com.ticket.module.ticket.vo.TicketVO;
+import com.ticket.module.stock.seat.SeatAvailabilityService;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 
@@ -180,6 +181,7 @@ class TicketServiceRoutingTest {
             IndexedTicketSearchService indexed) {
         return new TicketServiceImpl(
                 mapper, cache, index, indexed,
+                new SeatAvailabilityService(),
                 new SimpleMeterRegistry(), 3, 1);
     }
 
