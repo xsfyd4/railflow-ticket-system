@@ -2,6 +2,7 @@ package com.ticket.module.ticket.impl;
 
 import com.ticket.common.result.PageResult;
 import com.ticket.module.stock.entity.TicketStock;
+import com.ticket.module.stock.dto.StockRangeQuery;
 import com.ticket.module.stock.mapper.TicketStockMapper;
 import com.ticket.module.stock.seat.SeatAvailability;
 import com.ticket.module.stock.seat.SeatAvailabilityService;
@@ -44,12 +45,22 @@ public class IndexedTicketSearchService {
                     0, query.getPage(), query.getSize(), List.of());
         }
 
-        List<Long> trainIds = new ArrayList<>(bucket.size());
-        for (long trainId : bucket.getTrainIds()) {
-            trainIds.add(trainId);
+        List<StockRangeQuery> ranges = new ArrayList<>(bucket.size());
+        for (int i = 0; i < bucket.size(); i++) {
+            ranges.add(new StockRangeQuery(
+                    bucket.getTrainIds()[i],
+                    bucket.getFromSegmentIndexes()[i],
+                    bucket.getToSegmentIndexes()[i]));
         }
-        List<TicketStock> stockRows = stockMapper.findForSearch(
-                query.getTravelDate(), trainIds);
+        int firstSeat = query.getSeatType() == null
+                ? 1 : query.getSeatType();
+        int lastSeat = query.getSeatType() == null
+                ? 3 : query.getSeatType();
+        List<TicketStock> stockRows = new ArrayList<>();
+        for (int seatType = firstSeat; seatType <= lastSeat; seatType++) {
+            stockRows.addAll(stockMapper.findForSearch(
+                    query.getTravelDate(), seatType, ranges));
+        }
         Map<Long, Map<Integer, Map<Integer, TicketStock>>> stock =
                 indexStock(stockRows);
 

@@ -1,6 +1,7 @@
 package com.ticket.module.stock.mapper;
 
 import com.ticket.module.stock.entity.TicketStock;
+import com.ticket.module.stock.dto.StockRangeQuery;
 import com.ticket.module.stock.vo.StockVO;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
@@ -63,7 +64,8 @@ public interface TicketStockMapper {
      */
     List<TicketStock> findForSearch(
             @Param("travelDate") LocalDate travelDate,
-            @Param("trainIds") List<Long> trainIds);
+            @Param("seatType") Integer seatType,
+            @Param("ranges") List<StockRangeQuery> ranges);
 
     /** 按 id 查一条 */
     StockVO findById(@Param("id") Long id);

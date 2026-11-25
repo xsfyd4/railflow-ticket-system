@@ -103,11 +103,14 @@
                sold_seat_mask, version, updated_at
         FROM ticket_stock
         WHERE travel_date = #{travelDate}
-          AND train_id IN
-          <foreach collection="trainIds" item="trainId"
-                   open="(" separator="," close=")">
-              #{trainId}
+          AND seat_type = #{seatType}
+          AND (
+          <foreach collection="ranges" item="range" separator=" OR ">
+              (train_id = #{range.trainId}
+               AND segment_index BETWEEN #{range.fromSegmentIndex}
+                                     AND #{range.toSegmentIndex})
           </foreach>
+          )
         ORDER BY train_id, seat_type, segment_index
     </select>
 
