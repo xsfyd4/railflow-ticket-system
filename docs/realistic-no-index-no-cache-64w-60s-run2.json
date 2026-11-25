@@ -1,0 +1,27 @@
+{
+  "target": "http://localhost:18080",
+  "pool": "docs/query-pool-realistic.json",
+  "concurrency": 64,
+  "durationSeconds": 60.037,
+  "totalRequests": 136424,
+  "successfulRequests": 136424,
+  "failedRequests": 0,
+  "qps": 2272.34,
+  "latencyMs": {
+    "avg": 28.07,
+    "p50": 27.09,
+    "p95": 45.47,
+    "p99": 56.62,
+    "max": 142.15
+  },
+  "pathCounters": {
+    "cache.hit": 0.0,
+    "cache.wait-hit": 0.0,
+    "index": 0.0,
+    "mysql-slow": 136424.0,
+    "route-miss": 0.0
+  },
+  "cacheHitRate": 0.0,
+  "missRequests": 136424.0,
+  "sampleErrors": []
+}
