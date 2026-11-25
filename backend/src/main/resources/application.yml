@@ -71,6 +71,7 @@ logging:
 # ------------------------------------------------------------
 ticket:
   route-index:
+    enabled: ${TICKET_ROUTE_INDEX_ENABLED:true}
     retry-delay-ms: 30000
   redis:
     # 查票对象和版本号使用独立的 cache 数据组。

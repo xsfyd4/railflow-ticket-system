@@ -1,0 +1,23 @@
+{
+  "timestamp": "2026-11-25T13:22:04+0800",
+  "target": "http://localhost:18080/api/user/tickets/search?fromStationId=1&toStationId=27&travelDate=2026-11-26&page=1&size=10&seatType=3",
+  "scenario": "search",
+  "processes": 4,
+  "workersPerProcess": 16,
+  "totalConcurrency": 64,
+  "configuredDurationSeconds": 20.0,
+  "actualDurationSeconds": 20.024,
+  "totalRequests": 69265,
+  "successfulRequests": 69265,
+  "failedRequests": 0,
+  "errorCount": 0,
+  "qps": 3459.03,
+  "latencyMs": {
+    "avg": 18.45,
+    "p50": 16.75,
+    "p95": 34.5,
+    "p99": 50.33,
+    "max": 145.46
+  },
+  "sampleErrors": []
+}

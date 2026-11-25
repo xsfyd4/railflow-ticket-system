@@ -29,7 +29,7 @@ class TrainRouteIndexLifecycleTest {
         when(mapper.findAllPricesForIndex()).thenReturn(List.of());
 
         TrainRouteIndex index = new TrainRouteIndex(
-                mapper, new SimpleMeterRegistry());
+                mapper, new SimpleMeterRegistry(), true);
         try {
             index.requestRebuild("test");
             assertTrue(entered.await(5, TimeUnit.SECONDS));
@@ -52,7 +52,7 @@ class TrainRouteIndexLifecycleTest {
         when(mapper.findAllStopsForIndex())
                 .thenThrow(new IllegalStateException("db down"));
         TrainRouteIndex index = new TrainRouteIndex(
-                mapper, new SimpleMeterRegistry());
+                mapper, new SimpleMeterRegistry(), true);
         try {
             index.requestRebuild("test");
             awaitState(index, TrainRouteIndex.State.UNAVAILABLE);

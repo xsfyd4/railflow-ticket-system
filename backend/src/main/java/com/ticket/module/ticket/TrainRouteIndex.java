@@ -11,6 +11,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
@@ -53,10 +54,14 @@ public class TrainRouteIndex {
     private final AtomicBoolean workerRunning = new AtomicBoolean();
     private final Counter buildSuccess;
     private final Counter buildFailure;
+    private final boolean enabled;
 
     public TrainRouteIndex(TrainRouteIndexMapper mapper,
-                           MeterRegistry meterRegistry) {
+                           MeterRegistry meterRegistry,
+                           @Value("${ticket.route-index.enabled:true}")
+                           boolean enabled) {
         this.mapper = mapper;
+        this.enabled = enabled;
         this.executor = Executors.newSingleThreadExecutor(runnable -> {
             Thread thread = new Thread(
                     runnable, "route-index-builder");
@@ -80,6 +85,11 @@ public class TrainRouteIndex {
 
     @EventListener(ApplicationReadyEvent.class)
     public void initialize() {
+        if (!enabled) {
+            state.set(State.UNAVAILABLE);
+            log.info("车段车次索引已禁用，查票固定使用 MySQL 慢查询");
+            return;
+        }
         requestRebuild("application-startup");
     }
 
@@ -135,6 +145,10 @@ public class TrainRouteIndex {
      * 之后的查票请求会立刻进入慢查询。
      */
     public void requestRebuild(String reason) {
+        if (!enabled) {
+            state.set(State.UNAVAILABLE);
+            return;
+        }
         beginRebuild(reason);
         startRebuild();
     }
@@ -158,6 +172,9 @@ public class TrainRouteIndex {
             initialDelayString = "${ticket.route-index.retry-delay-ms:30000}",
             fixedDelayString = "${ticket.route-index.retry-delay-ms:30000}")
     public void retryIfUnavailable() {
+        if (!enabled) {
+            return;
+        }
         if (state.get() == State.UNAVAILABLE) {
             requestRebuild("scheduled-retry");
         }

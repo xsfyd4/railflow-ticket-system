@@ -11,6 +11,7 @@ import org.springframework.stereotype.Service;
 
 import java.time.LocalDate;
 import java.util.List;
+import java.time.Duration;
 
 /**
  * 热门站对查票对象预热。
@@ -53,6 +54,7 @@ public class TicketSearchWarmupService {
     private final int pageSize;
 
     public int warmup() {
+        long startedNanos = System.nanoTime();
         List<TicketSearchDTO> pairs =
                 mapper.findWarmupStationPairs(maxRoutes);
         int count = 0;
@@ -82,8 +84,10 @@ public class TicketSearchWarmupService {
                 }
             }
         }
-        log.info("查票对象预热完成，线路={}，席别查询={}",
-                pairs.size(), count);
+        long elapsedMs = Duration.ofNanos(
+                System.nanoTime() - startedNanos).toMillis();
+        log.info("查票对象预热完成，线路={}，席别查询={}，耗时={}ms",
+                pairs.size(), count, elapsedMs);
         return count;
     }
 }
