@@ -2,26 +2,26 @@
   "target": "http://localhost:18080",
   "pool": "docs/query-pool-realistic.json",
   "concurrency": 64,
-  "durationSeconds": 60.039,
-  "totalRequests": 132226,
-  "successfulRequests": 132226,
+  "durationSeconds": 60.036,
+  "totalRequests": 123420,
+  "successfulRequests": 123420,
   "failedRequests": 0,
-  "qps": 2202.32,
+  "qps": 2055.77,
   "latencyMs": {
-    "avg": 28.96,
-    "p50": 27.44,
-    "p95": 49.11,
-    "p99": 64.67,
-    "max": 156.2
+    "avg": 31.03,
+    "p50": 29.35,
+    "p95": 53.13,
+    "p99": 69.54,
+    "max": 172.86
   },
   "pathCounters": {
     "cache.hit": 0.0,
     "cache.wait-hit": 0.0,
     "index": 0.0,
-    "mysql-slow": 132226.0,
+    "mysql-slow": 123420.0,
     "route-miss": 0.0
   },
   "cacheHitRate": 0.0,
-  "missRequests": 132226.0,
+  "missRequests": 123420.0,
   "sampleErrors": []
 }

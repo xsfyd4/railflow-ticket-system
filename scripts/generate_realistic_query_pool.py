@@ -29,11 +29,17 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     sql = f"""
-        SELECT from_station_id, to_station_id,
-               COUNT(DISTINCT train_id) AS train_count
-        FROM `{args.database}`.train_segment
-        WHERE from_station_id <> to_station_id
-        GROUP BY from_station_id, to_station_id
+        SELECT a.station_id AS from_station_id,
+               b.station_id AS to_station_id,
+               COUNT(DISTINCT a.train_id) AS train_count
+        FROM `{args.database}`.train_stop a
+        INNER JOIN `{args.database}`.train_stop b
+                ON b.train_id = a.train_id
+               AND b.stop_order > a.stop_order
+        INNER JOIN `{args.database}`.train t
+                ON t.id = a.train_id
+        WHERE t.status = 1
+        GROUP BY a.station_id, b.station_id
         ORDER BY train_count DESC, from_station_id, to_station_id
         LIMIT {args.limit}
     """
