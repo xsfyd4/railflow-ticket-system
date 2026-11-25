@@ -7,6 +7,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.util.stream.Collectors;
@@ -52,6 +53,18 @@ public class GlobalExceptionHandler {
         }
         log.warn("参数校验失败：{}", msg);
         return R.fail(ResultCode.BAD_REQUEST.getCode(), msg);
+    }
+
+    /**
+     * 请求体不是合法 JSON，或者字段类型无法转换时，属于客户端请求错误。
+     * 不能让这类异常落入 500 兜底，否则调用方会误以为服务端发生故障。
+     */
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public R<Void> handleUnreadableMessage(
+            HttpMessageNotReadableException e) {
+        log.warn("请求体无法解析：{}", e.getMostSpecificCause().getMessage());
+        return R.fail(ResultCode.BAD_REQUEST.getCode(),
+                "请求体格式不正确");
     }
 
     /**
